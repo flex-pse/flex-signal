@@ -440,11 +440,79 @@ thin pandas-native protocol on sklearn's `BaseEstimator`, and treat sktime and d
 
 ---
 
-## 7. Roadmap
+## 7. Documentation
+
+The documentation mirrors flex-pse's setup (`docs/`, `.github/workflows/docs.yml` at v0.2.0), so the two projects
+read as one ecosystem.
+
+**Tooling**
+
+- **Sphinx** with **furo**, **myst-parser** (pages in Markdown, `index.rst` as the root), `autodoc`, `autosummary`
+  (`autosummary_generate = True`), `napoleon` (Google docstrings only) and `intersphinx`.
+- **Intersphinx targets:** python, pandas, numpy, scipy, scikit-learn, statsmodels, pydantic and flex-pse
+  (`https://flex-pse.github.io/flex-pse/`). We link to flex-pse's `TimeBlock`, `apply_spec` and
+  `flexparameterize` pages instead of re-describing them.
+- **Strict builds.** We use `nitpicky = True` and `sphinx-build -W --keep-going`, so a broken cross-reference
+  fails CI. Any `nitpick_ignore` entries are commented one by one, as in flex-pse.
+- **Docstrings.** Google style is enforced by ruff's `D` rules with `pydocstyle.convention = "google"`. This goes
+  one step further than flex-pse, which does not select `D`, and matches flex-orchestrator. Every public function,
+  class and pydantic field has a docstring or `description`. Field descriptions go verbatim into the JSON Schema,
+  so they are plain text.
+- **Heavy extras are mocked.** Optional backends (torch, pypots, darts, chronos, ...) are listed in
+  `autodoc_mock_imports`, so the docs build needs only `.[docs]`. flex-pse is imported lazily in our code, so the
+  docs build does not need it either. Intersphinx covers the links.
+- **Same skip hook as flex-pse.** Members marked `.. deprecated::` or `TODO` are dropped from the generated reference.
+- **Deployment.** `docs.yml` builds on every PR and deploys to GitHub Pages from `main` (upload-pages-artifact,
+  deploy-pages), on Python 3.13.
+
+**Generated from code, so it cannot drift.** `docs/_ext/flexsignaldoc.py` is the counterpart of flex-pse's
+`flexdoc.py`. Its collection functions are plain Python and are unit-tested directly. It provides these directives:
+
+| Directive | Renders |
+|---|---|
+| `.. flexsignal-step-table::` | Every registered step `kind`: category, backing library, required extra, one-line summary |
+| `.. flexsignal-spec-table:: <pydantic model>` | Fields of a step or spec model: name, type, default, description |
+| `.. flexsignal-backend-table::` | Every backend key (`sklearn:*`, `pypots:*`, ...) with its extra and a link to the upstream docs |
+| `.. flexsignal-flag-table::` | The quality-flag bits and what sets each one |
+
+The committed `signal_spec.schema.json` is also published as a downloadable page.
+
+**Layout** (Diátaxis, same sections as flex-pse)
+
+```
+docs/
+  index.rst
+  getting_started/   installation (core + extras matrix), ten_minutes (the A/B/C/D example end to end)
+  explanation/       signal_frame_and_flags, spec_schema, conditions, steps_and_backends, calibration,
+                     imputation_tiers, forecasting_and_backtesting, time_and_units, flexpse_integration,
+                     orchestrator_contract
+  how_to/            clean_a_stream, calibrate_against_a_reference, impute_gaps, evaluate_imputers,
+                     forecast_and_backtest, feed_flexparameterize, apply_to_a_flexpse_model,
+                     save_and_load_a_fitted_pipeline, write_a_backend
+  examples/          runnable scripts on the synthetic and SVCW fixtures
+  reference/         flexsignal.core, spec, steps (generated tables), backends, pipeline, api,
+                     integrations.flexpse, glossary
+  changelog.md       includes CHANGELOG.md
+  _ext/ _static/ _templates/autosummary/
+```
+
+**Examples are tested.** Every script in `docs/examples/` and every how-to code block runs in CI under the
+`integration` marker. Examples that need an optional extra are skipped when it isn't installed.
+
+**Writing standard.** We follow flex-pse's `CONTRIBUTING.md`: plain, direct prose written for a human reviewer,
+and error messages that say what went wrong and what to do. We also mirror its GitHub issue templates (including
+"documentation improvement") and its PR template.
+
+**Definition of done.** Every phase ships with its explanation, how-to and reference pages, and with a `-W` docs
+build that passes. A feature without docs is not finished.
+
+---
+
+## 8. Roadmap
 
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
-| 0 | Scaffold: pyproject (setuptools, src layout), ruff, black, import-linter, pytest markers (`unit`, `component`, `integration`), CI on 3.11–3.14, CONTRIBUTING and CHANGELOG mirroring flex-pse | `pytest` and the lint hooks pass on an empty package |
+| 0 | Scaffold: pyproject (setuptools, src layout, `[docs]` extra), ruff with `D` rules, black, import-linter, pytest markers (`unit`, `component`, `integration`), CI on 3.11–3.14, CONTRIBUTING, CHANGELOG, issue and PR templates mirroring flex-pse. Docs skeleton: Sphinx `conf.py`, furo, the §7 layout with stub pages, `docs.yml` deploying to GitHub Pages | `pytest`, the lint hooks and `sphinx-build -W` pass on an empty package; the Pages site is live |
 | 1 | `core` (SignalFrame, flags, exceptions, registries), `spec` (schema, io, migrations, JSON Schema, named input slots), `select` and `clean` steps, `interpolate`, parquet io, `Pipeline` fit/transform plus `to_payload`/`from_payload`, `api.run`/`api.fit` | The A/B/C/D example runs from Python and from JSON with an identical result; spec round trip passes; JSON Schema is committed; first `tests/contract/` tests pass (JSON round trip, pickling) |
 | 2 | `calibrate`, `regression`/`kalman`/`tiered` imputers, `eval` masking benchmark | Imputer comparison report on the SVCW fixture; replaces flex-pse `impute_timeseries.py` |
 | 3 | flex-pse v0.2.0 integration: `to_grid`, `to_parameterize`, `to_elements`, `patch_spec` | End-to-end: raw CSV → clean → `flexparameterize.apply_to_model` (multilinear) → `flexops.apply_spec` with our elements. import-linter shows no flex-pse import outside `integrations.flexpse`, and `import flexsignal` loads no pyomo. `arima_history` is added when flex-pse releases ARIMA |
@@ -462,7 +530,7 @@ Test data:
 
 ---
 
-## 8. Decisions and open questions
+## 9. Decisions and open questions
 
 ### Decided (2026-11-06)
 
@@ -475,6 +543,7 @@ Test data:
 | D5 | **pandas internally**; polars only at the Acquirium boundary |
 | D6 | **No orchestrator plugin in flex-signal.** flex-orchestrator will write a direct wrapper once flex-signal is stable. flex-signal guarantees an orchestrator-ready API (§4.3), verified by contract tests |
 | D7 | **Acquirium last.** Build against acquirium `main` in phase 7, after everything else works, which gives its API time to settle. Nothing before phase 7 depends on Acquirium |
+| D8 | **Documentation mirrors flex-pse:** Sphinx with furo and MyST, Diátaxis layout, strict `-W` builds, reference tables generated from the code, tested examples, GitHub Pages. Docs ship with every phase (§7) |
 
 ### Open
 
