@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: black --check .
+      - run: lint-imports
+
+  unit-tests:
+    name: unit-tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Full Python matrix on Linux; one representative version on
+        # macOS/Windows to confirm cross-OS behavior (same policy as flex-pse).
+        include:
+          - { os: ubuntu-latest, python-version: "3.11" }
+          - { os: ubuntu-latest, python-version: "3.12" }
+          - { os: ubuntu-latest, python-version: "3.13" }
+          - { os: ubuntu-latest, python-version: "3.14" }
+          - { os: macos-latest, python-version: "3.13" }
+          - { os: windows-latest, python-version: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -m "unit or component" --cov --cov-report=xml
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unit
+
+  standard-install:
+    name: standard-install (py${{ matrix.python-version }})
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install "git+${{ format('{0}/{1}@{2}', github.server_url, github.repository, github.ref) }}"
+      # Run from a scratch dir (no repo checkout exists) so the *installed*
+      # package is exercised, with core dependencies only.
+      - working-directory: ${{ runner.temp }}
+        run: |
+          python - <<'PY'
+          import importlib
+          import sys
+
+          modules = [
+              "flexsignal", "flexsignal.core", "flexsignal.spec", "flexsignal.io",
+              "flexsignal.backends", "flexsignal.steps", "flexsignal.pipeline",
+              "flexsignal.eval", "flexsignal.api", "flexsignal.integrations",
+              "flexsignal.integrations.flexpse", "flexsignal.integrations.acquirium",
+          ]
+          for name in modules:
+              importlib.import_module(name)
+          forbidden = ["flexcore", "flexops", "flexparameterize", "pyomo", "idaes",
+                       "torch", "polars", "acquirium"]
+          leaked = [m for m in forbidden if m in sys.modules]
+          assert not leaked, f"import loaded {leaked}"
+          print(f"OK: imported {len(modules)} modules from the installed package")
+          PY
+
+  integration:
+    name: integration (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python-version: "3.11" }
+          - { os: ubuntu-latest, python-version: "3.14" }
+          - { os: windows-latest, python-version: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      # The integration set is empty until M2/M3; pytest exits 5 (no tests
+      # collected) in that case, which is treated as success so this job is
+      # structural from day one. `shell: bash` forces Git Bash on Windows so
+      # the script is identical on all OSes.
+      - shell: bash
+        run: |
+          set +e
+          pytest -m integration --cov --cov-report=xml
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -eq 5 ]; then
+            exit 0
+          fi
+          exit "$exit_code"
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: integration

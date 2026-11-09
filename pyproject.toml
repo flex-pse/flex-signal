@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flex-signal"
+version = "0.0.1"
+description = "Timeseries selection, cleaning, imputation and forecasting for the flex-pse ecosystem"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+]
+# Core dependencies (PLAN.md §5.1): wheel-only, no torch. Heavy or specialised
+# libraries (PyPOTS, Nixtla, darts, foundation models, ...) are optional
+# extras, imported lazily, and are added in the milestone whose code uses them.
+dependencies = [
+    "pandas>=3",
+    "numpy",
+    "scipy",
+    "scikit-learn>=1.6",
+    "statsmodels>=0.14",
+    "pydantic>=2",
+    "pyarrow",
+    "pandera",
+]
+
+[project.urls]
+Homepage = "https://github.com/flex-pse/flex-signal"
+Documentation = "https://flex-pse.github.io/flex-signal/"
+Repository = "https://github.com/flex-pse/flex-signal"
+Changelog = "https://github.com/flex-pse/flex-signal/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# Backend and integration extras (pypots, nixtla, foundation, flexpse,
+# acquirium, ...) are declared in the milestone that adds their adapter, so an
+# extra never installs packages nothing uses yet. See PLAN.md §5.2.
+testing = ["pytest"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist",
+    "import-linter",
+    "ruff",
+    "black",
+    "pre-commit",
+    "diff-cover",
+]
+docs = ["sphinx", "myst-parser", "furo"]
+
+[tool.coverage.run]
+branch = true
+omit = ["*/tests/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+flexsignal = ["py.typed"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["src"]
+markers = [
+    "unit: fast (<1s) tests with no optional extras; the TDD inner loop",
+    "component: small end-to-end pipelines on fixture data (seconds)",
+    "integration: end-to-end tests against real data, flex-pse or optional extras (minutes)",
+]
+
+[tool.ruff.lint]
+# flex-pse's rule set plus "D", so the Google docstring convention is actually
+# enforced (matches flex-orchestrator; PLAN.md §7).
+select = ["E", "F", "I", "B", "UP", "D"]
+pydocstyle.convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["D"]
+"conftest.py" = ["D"]
+"docs/**" = ["D"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]

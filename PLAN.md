@@ -96,7 +96,7 @@ src/flexsignal/
 import-linter layering (same tool as flex-pse):
 
 ```
-core <- spec <- backends <- steps <- pipeline <- {io, eval, api} <- integrations.{flexpse | acquirium}
+core <- {spec | io} <- backends <- steps <- pipeline <- {eval | api} <- integrations.{flexpse | acquirium}
 ```
 
 Each `integrations.*` package imports its third-party target only inside itself. Each is behind its own extra.
