@@ -58,10 +58,24 @@ These rules come from decisions in [PLAN.md](PLAN.md). CI enforces most of them.
   marker:
   - `unit`: under a second, no optional extras;
   - `component`: small end-to-end pipelines;
-  - `integration`: real data, flex-pse or optional extras.
+  - `integration`: larger synthetic datasets, flex-pse or optional extras.
 
   Algorithm tests are deterministic, with fixed seeds and synthetic data with known injected faults. Every bug fix
   comes with a test that reproduces the bug.
+- **No outside data.** Tests, examples, benchmarks and docs use only two kinds of data:
+  - data from flex-signal's synthetic generator (`flexsignal.testing.synthetic`);
+  - the public flex-pse test dataset vendored in `src/flexsignal/tests/data/flexpse/`, whose README records its
+    provenance.
+
+  Do not copy data from other repositories, and do not commit plant or customer data. If a bug only shows up on
+  real data, reproduce it with a synthetic case.
+- **Tests first.** Write the tests for a new step or backend before the implementation, and confirm they fail for
+  the right reason (an `ImportError`, not a typo) before writing the code.
+- **Validate methods and cite them.** A cleaning, imputation or forecasting method, and its default parameters
+  (a Hampel window, a Tukey fence, a gap-length threshold), should rest on the documentation of the library it
+  wraps, peer-reviewed literature, or a documented benchmark. Cite the source in the step's docstring or its
+  explanation page. State the method's range of validity: the gap lengths, sampling rates and data properties it
+  assumes. Never fabricate a citation or a benchmark result.
 - **Docs ship with the code.** A feature is not done until its explanation, how-to and reference pages exist and
   `sphinx-build -W` passes. Public functions, classes and pydantic fields need Google-style docstrings or
   `description`s. Ruff's `D` rules enforce this.

@@ -36,7 +36,7 @@ available yet.
 | Extra | Contents | Milestone |
 |---|---|---|
 | `eval` | pygrinder masking benchmarks | M2 |
-| `flexpse` | flex-pse 0.2.0 with `parameterize` | M3 |
+| `flexpse` | The latest flex-pse release (v0.3.0 today) with `parameterize`, installed from its git tag until flex-pse is on PyPI | M3 |
 | `ml` | skforecast, lightgbm | M4 |
 | `nixtla` | statsforecast, mlforecast | M4 |
 | `pypots` | PyPOTS deep imputation and forecasting | M5 |

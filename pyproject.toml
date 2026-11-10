@@ -72,8 +72,8 @@ addopts = "--strict-markers"
 testpaths = ["src"]
 markers = [
     "unit: fast (<1s) tests with no optional extras; the TDD inner loop",
-    "component: small end-to-end pipelines on fixture data (seconds)",
-    "integration: end-to-end tests against real data, flex-pse or optional extras (minutes)",
+    "component: small end-to-end pipelines on synthetic data (seconds)",
+    "integration: end-to-end tests on larger synthetic datasets, flex-pse or optional extras (minutes)",
 ]
 
 [tool.ruff.lint]

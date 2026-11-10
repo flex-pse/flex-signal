@@ -1,5 +1,8 @@
 name: CI
 
+# Mirrors flex-pse v0.3.0's ci.yml (uv installs, one coverage run, wheel-based
+# standard install), minus the solver setup flex-signal does not need.
+
 on:
   pull_request:
   push:
@@ -12,6 +15,7 @@ concurrency:
 permissions:
   contents: read
 
+# No job waits on lint; it blocks merges as a required check instead.
 jobs:
   lint:
     name: lint
@@ -21,24 +25,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - run: uv pip install --system -e ".[dev]"
       - run: ruff check .
       - run: black --check .
       - run: lint-imports
 
   unit-tests:
     name: unit-tests (${{ matrix.os }}, py${{ matrix.python-version }})
-    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Full Python matrix on Linux; one representative version on
         # macOS/Windows to confirm cross-OS behavior (same policy as flex-pse).
+        # The ubuntu/3.13 entry is the single coverage run.
         include:
           - { os: ubuntu-latest, python-version: "3.11" }
           - { os: ubuntu-latest, python-version: "3.12" }
-          - { os: ubuntu-latest, python-version: "3.13" }
+          - { os: ubuntu-latest, python-version: "3.13", coverage: true }
           - { os: ubuntu-latest, python-version: "3.14" }
           - { os: macos-latest, python-version: "3.13" }
           - { os: windows-latest, python-version: "3.13" }
@@ -47,16 +55,72 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      - run: pytest -m "unit or component" --cov --cov-report=xml
-      - uses: codecov/codecov-action@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - run: uv pip install --system -e ".[dev]"
+
+      - name: Tests (unit + component, no coverage)
+        if: ${{ !matrix.coverage }}
+        run: pytest -n auto -m "unit or component"
+
+      # All tiers combined, one run. Per-subpackage coverage floors are added
+      # once M1 code exists (set at actual - 2%, as flex-pse does).
+      - name: Tests (all tiers, with coverage)
+        if: ${{ matrix.coverage }}
+        run: pytest -n auto --cov=flexsignal --cov-report=xml --cov-report=term
+      # The only Codecov upload; keep codecov.yml's after_n_builds in step.
+      - if: ${{ matrix.coverage }}
+        uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: unit
 
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - run: uv pip install --system -e ".[dev]"
+      # The integration set is empty until M2/M3; pytest exits 5 (no tests
+      # collected) in that case, which is treated as success so this job is
+      # structural from day one. When M3 lands, this job also installs the
+      # latest flex-pse release from its git tag (PLAN.md D3).
+      - shell: bash
+        run: |
+          set +e
+          pytest -m integration
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -eq 5 ]; then exit 0; fi
+          exit "$exit_code"
+
+  build-wheel:
+    name: build-wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install build
+      - run: python -m build --wheel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
+
   standard-install:
     name: standard-install (py${{ matrix.python-version }})
-    needs: lint
+    needs: build-wheel
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -65,7 +129,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install "git+${{ format('{0}/{1}@{2}', github.server_url, github.repository, github.ref) }}"
+      # No checkout here, so no cache-dependency-glob to key on.
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: ${{ runner.temp }}/dist
+      - name: Install the wheel (no extras)
+        shell: bash
+        run: uv pip install --system "$(ls "$RUNNER_TEMP"/dist/*.whl)"
       # Run from a scratch dir (no repo checkout exists) so the *installed*
       # package is exercised, with core dependencies only.
       - working-directory: ${{ runner.temp }}
@@ -86,41 +158,5 @@ jobs:
                        "torch", "polars", "acquirium"]
           leaked = [m for m in forbidden if m in sys.modules]
           assert not leaked, f"import loaded {leaked}"
-          print(f"OK: imported {len(modules)} modules from the installed package")
+          print(f"OK: imported {len(modules)} modules from the installed wheel")
           PY
-
-  integration:
-    name: integration (${{ matrix.os }}, py${{ matrix.python-version }})
-    needs: lint
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, python-version: "3.11" }
-          - { os: ubuntu-latest, python-version: "3.14" }
-          - { os: windows-latest, python-version: "3.13" }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      # The integration set is empty until M2/M3; pytest exits 5 (no tests
-      # collected) in that case, which is treated as success so this job is
-      # structural from day one. `shell: bash` forces Git Bash on Windows so
-      # the script is identical on all OSes.
-      - shell: bash
-        run: |
-          set +e
-          pytest -m integration --cov --cov-report=xml
-          exit_code=$?
-          set -e
-          if [ "$exit_code" -eq 5 ]; then
-            exit 0
-          fi
-          exit "$exit_code"
-      - uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: integration
