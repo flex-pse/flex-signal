@@ -25,16 +25,17 @@ conda activate flex-signal
 pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
 
-Without conda, use `pip install -e ".[dev,docs]"` instead. The pre-commit hooks expect the `flex-signal` conda
+Without conda, use `pip install -e ".[dev,docs,tutorials]"` instead. The pre-commit hooks expect the `flex-signal` conda
 environment.
 
 ## Optional extras
 
-Each heavy or specialised library is an optional extra, added in the milestone whose code uses it. They are not
-available yet.
+Each heavy or specialised library is an optional extra, added in the milestone whose code uses it. Only
+`tutorials` exists so far.
 
 | Extra | Contents | Milestone |
 |---|---|---|
+| `tutorials` | marimo (pinned) and matplotlib, to run the [tutorials](../tutorials/index.md) | M1 |
 | `eval` | pygrinder masking benchmarks | M2 |
 | `flexpse` | The latest flex-pse release (v0.3.0 today) with `parameterize`, installed from its git tag until flex-pse is on PyPI | M3 |
 | `ml` | skforecast, lightgbm | M4 |

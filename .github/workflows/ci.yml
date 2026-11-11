@@ -89,11 +89,12 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: pyproject.toml
-      - run: uv pip install --system -e ".[dev]"
-      # The integration set is empty until M2/M3; pytest exits 5 (no tests
-      # collected) in that case, which is treated as success so this job is
-      # structural from day one. When M3 lands, this job also installs the
-      # latest flex-pse release from its git tag (PLAN.md D3).
+      # The tutorials extra lets the integration tier run every marimo tutorial
+      # as a script (PLAN.md D12).
+      - run: uv pip install --system -e ".[dev,tutorials]"
+      # pytest exits 5 if no tests are collected; that is treated as success so
+      # this job never fails just for being empty. When M3 lands, this job also
+      # installs the latest flex-pse release from its git tag (PLAN.md D3).
       - shell: bash
         run: |
           set +e
@@ -149,7 +150,8 @@ jobs:
           modules = [
               "flexsignal", "flexsignal.core", "flexsignal.spec", "flexsignal.io",
               "flexsignal.backends", "flexsignal.steps", "flexsignal.pipeline",
-              "flexsignal.eval", "flexsignal.api", "flexsignal.integrations",
+              "flexsignal.eval", "flexsignal.api", "flexsignal.testing",
+              "flexsignal.integrations",
               "flexsignal.integrations.flexpse", "flexsignal.integrations.acquirium",
           ]
           for name in modules:
@@ -158,5 +160,7 @@ jobs:
                        "torch", "polars", "acquirium"]
           leaked = [m for m in forbidden if m in sys.modules]
           assert not leaked, f"import loaded {leaked}"
+          import flexsignal.spec.schema as schema
+          assert schema.SCHEMA_PATH.exists(), "JSON Schema missing from the wheel"
           print(f"OK: imported {len(modules)} modules from the installed wheel")
           PY

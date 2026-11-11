@@ -6,18 +6,24 @@ include_external_packages = True
 # Layering (PLAN.md §3.1). Higher layers may import lower ones, never the
 # reverse. Siblings separated by "|" must not import each other.
 [importlinter:contract:layers]
-name = core <- {spec | io} <- backends <- steps <- pipeline <- {eval | api} <- integrations
+name = core <- {spec | io} <- backends <- steps <- pipeline <- {eval | api | testing} <- integrations
 type = layers
 containers =
     flexsignal
 layers =
     integrations
-    eval | api
+    eval | api | testing
     pipeline
     steps
     backends
     spec | io
     core
+# Tests may use the whole package (the public API and the synthetic data in
+# flexsignal.testing), so imports *from* test modules are exempt. Library code
+# stays fully checked.
+ignore_imports =
+    flexsignal.*.tests.** -> flexsignal
+    flexsignal.*.tests.** -> flexsignal.testing.**
 
 [importlinter:contract:integrations-independent]
 name = integrations.flexpse and integrations.acquirium are independent
@@ -40,6 +46,7 @@ source_modules =
     flexsignal.pipeline
     flexsignal.eval
     flexsignal.api
+    flexsignal.testing
     flexsignal.integrations.acquirium
 forbidden_modules =
     flexcore
@@ -61,6 +68,7 @@ source_modules =
     flexsignal.pipeline
     flexsignal.eval
     flexsignal.api
+    flexsignal.testing
     flexsignal.integrations.flexpse
 forbidden_modules =
     acquirium

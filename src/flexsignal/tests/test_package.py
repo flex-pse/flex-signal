@@ -18,6 +18,7 @@ SUBPACKAGES = [
     "flexsignal.pipeline",
     "flexsignal.eval",
     "flexsignal.api",
+    "flexsignal.testing",
     "flexsignal.integrations",
     "flexsignal.integrations.flexpse",
     "flexsignal.integrations.acquirium",

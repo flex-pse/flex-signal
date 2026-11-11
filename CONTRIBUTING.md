@@ -13,6 +13,8 @@ you submit anything.
 - [Human Readability Standards](#human-readability-standards)
 - [Contributor Responsibility](#contributor-responsibility)
 - [Use of AI Tools](#use-of-ai-tools)
+- [Adding a Step or Backend](#adding-a-step-or-backend)
+- [Writing a Tutorial](#writing-a-tutorial)
 - [Submitting a Pull Request](#submitting-a-pull-request)
 - [Spec schema versioning](#spec-schema-versioning)
 - [Review & Verification by Maintainers](#review--verification-by-maintainers)
@@ -33,7 +35,7 @@ you submit anything.
 ## Getting Started
 
 1. Fork the repository and clone it locally.
-2. Create the environment: `conda env create -f environment.yml` (or `pip install -e ".[dev,docs]"`).
+2. Create the environment: `conda env create -f environment.yml` (or `pip install -e ".[dev,docs,tutorials]"`).
 3. Install the hooks: `pre-commit install --hook-type pre-commit --hook-type pre-push`.
 4. Run `pytest` to confirm a clean baseline.
 5. Create a branch for your work: `git checkout -b your-short-branch-name`.
@@ -77,7 +79,8 @@ These rules come from decisions in [PLAN.md](PLAN.md). CI enforces most of them.
   explanation page. State the method's range of validity: the gap lengths, sampling rates and data properties it
   assumes. Never fabricate a citation or a benchmark result.
 - **Docs ship with the code.** A feature is not done until its explanation, how-to and reference pages exist and
-  `sphinx-build -W` passes. Public functions, classes and pydantic fields need Google-style docstrings or
+  `sphinx-build -W` passes. A milestone is not done until its tutorials exist too (see
+  [Writing a Tutorial](#writing-a-tutorial)). Public functions, classes and pydantic fields need Google-style docstrings or
   `description`s. Ruff's `D` rules enforce this.
 - **Changelog.** Add an entry under `[Unreleased]` in `CHANGELOG.md`.
 
@@ -124,6 +127,73 @@ The tool doesn't lower it.
   vetted will be closed without full review.
 - **Fabricated content is not acceptable.** Do not submit AI-generated citations, benchmarks, test results, or
   changelog entries that you haven't personally checked against reality.
+
+## Adding a Step or Backend
+
+A step is a frozen pydantic model that subclasses `flexsignal.spec.StepSpec`, or `flexsignal.steps.StreamStep`
+for steps that act on named streams. Its fields are its spec.
+
+1. **Pick the module.** Use `steps/select.py` for steps that move or choose data, `steps/clean.py` for steps that
+   reject bad values, and `steps/impute.py` for steps that fill gaps. Later milestones add `correct`, `forecast`
+   and `derive`.
+2. **Declare it.** Give it `kind: Literal["my_kind"] = "my_kind"` and its options as `Field(...)`s, each with a
+   plain-text `description`. Those descriptions go into the JSON Schema and the generated docs tables. Decorate
+   the class with `@register_step`.
+3. **Implement it.**
+   - `transform(sf, state) -> SignalFrame` returns a new frame.
+   - Never delete data: set rejected values to NaN with `remove_values(sf, mask, Flag.X)`.
+   - If the step learns from training data, `fit(sf) -> dict` returns that state as plain JSON (floats and
+     lists, not numpy).
+4. **Call libraries through backends.** Register a key with `flexsignal.backends.register_backend`, naming the
+   extra that installs the library, and resolve it with `get_backend` inside the step. Never import an optional
+   library at module level.
+5. **Write the tests first**, on `flexsignal.testing.synthetic` data. Test what the step does to the injected
+   faults it targets ("flags exactly the injected spikes"), not just that it runs.
+6. **Register it everywhere it shows up.**
+   - Add an example to `flexsignal.testing.examples.one_of_every_step`. A test fails until you do.
+   - Regenerate the JSON Schema with `python -m flexsignal.spec.schema`.
+   - Add the class and its `flexsignal-spec-table` to `docs/reference/steps.rst`.
+   - Add a CHANGELOG entry.
+
+Before pushing:
+
+```bash
+pytest -m unit -x -q                     # inner loop
+ruff check . && black --check .
+lint-imports                             # layering and the flex-pse/Acquirium rules
+pytest -q                                # all tiers, including the docs code
+sphinx-build -W --keep-going -b html docs docs/_build
+```
+
+## Writing a Tutorial
+
+Tutorials are [marimo](https://marimo.io) notebooks in `tutorials/`, numbered `NN_short_name.py` in teaching
+order. Each milestone adds the tutorials for what it ships, in the same PR as the code (PLAN.md D12). Install
+the tools with `pip install -e ".[tutorials]"` and edit with `marimo edit tutorials/NN_name.py`.
+
+1. **Teach one idea per section.** Start from the previous tutorial and build up. Write the prose in `mo.md`
+   cells for a reader who knows Python and pandas but not flex-signal. End with a short "Next".
+2. **Mark what is only for the notebook.** Readers copy tutorial code into their own scripts, so they need to
+   know which lines are flex-signal and which are marimo. Put a `# Display only (marimo): ...` comment above each
+   `mo.md`, `mo.vstack`, `mo.hstack` or `mo.accordion` call in a code cell. Put `# Notebook control (marimo): ...`
+   above each group of `mo.ui` widgets. Prose cells (`hide_code=True`) don't need it.
+3. **Use synthetic data with known faults**, and score each step against them: caught, missed, false alarms.
+   This is what makes a tutorial convincing, and it follows the No outside data rule above.
+4. **Make the lesson interactive where a parameter is the lesson.** Use a slider or drop-down when the reader
+   should see what a parameter changes, and a fixed table when they should compare a few settings.
+5. **Plot with matplotlib**, using the `COLORS` palette and `style(ax)` helper cell copied from an existing
+   tutorial, so all the tutorials look alike.
+6. **Assert what the prose claims.** The last code cell checks the numbers the text relies on, for example
+   `assert removed.equals(injected)`. CI runs every tutorial as a script, so a stale claim fails the build.
+7. **Check it before pushing:**
+
+   ```bash
+   marimo check tutorials/NN_name.py
+   python tutorials/NN_name.py              # what CI runs
+   pytest -m integration -k tutorial
+   ```
+
+   Add the tutorial to the table in `docs/tutorials/index.md`, and to its milestone in PLAN.md §8.
 
 ## Submitting a Pull Request
 
