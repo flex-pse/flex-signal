@@ -1,0 +1,67 @@
+[importlinter]
+root_packages =
+    flexsignal
+include_external_packages = True
+
+# Layering (PLAN.md §3.1). Higher layers may import lower ones, never the
+# reverse. Siblings separated by "|" must not import each other.
+[importlinter:contract:layers]
+name = core <- {spec | io} <- backends <- steps <- pipeline <- {eval | api} <- integrations
+type = layers
+containers =
+    flexsignal
+layers =
+    integrations
+    eval | api
+    pipeline
+    steps
+    backends
+    spec | io
+    core
+
+[importlinter:contract:integrations-independent]
+name = integrations.flexpse and integrations.acquirium are independent
+type = independence
+modules =
+    flexsignal.integrations.flexpse
+    flexsignal.integrations.acquirium
+
+# D1: flex-pse imports flex-signal, never the reverse. Only the flex-pse
+# integration may touch flex-pse, and only lazily (inside functions).
+[importlinter:contract:no-flexpse]
+name = flex-pse is imported only by integrations.flexpse
+type = forbidden
+source_modules =
+    flexsignal.core
+    flexsignal.spec
+    flexsignal.io
+    flexsignal.backends
+    flexsignal.steps
+    flexsignal.pipeline
+    flexsignal.eval
+    flexsignal.api
+    flexsignal.integrations.acquirium
+forbidden_modules =
+    flexcore
+    flexops
+    flexparameterize
+    pyomo
+    idaes
+
+# D5/D7: polars and Acquirium appear only at the Acquirium boundary.
+[importlinter:contract:no-acquirium]
+name = acquirium and polars are imported only by integrations.acquirium
+type = forbidden
+source_modules =
+    flexsignal.core
+    flexsignal.spec
+    flexsignal.io
+    flexsignal.backends
+    flexsignal.steps
+    flexsignal.pipeline
+    flexsignal.eval
+    flexsignal.api
+    flexsignal.integrations.flexpse
+forbidden_modules =
+    acquirium
+    polars

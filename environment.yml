@@ -1,0 +1,11 @@
+# Single conda environment for development.
+# Usage: conda env create -f environment.yml
+# The pre-commit hooks run inside this environment (`conda run -n flex-signal`).
+name: flex-signal
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pip
+  - pip:
+      - -e .[dev,docs]

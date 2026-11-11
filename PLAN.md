@@ -50,13 +50,16 @@ libraries listed in §6. flex-signal supplies:
 | flex-pse `flexcore.config` | `_StrictModel` (`extra="forbid"`), `FlowsheetSpec` with `schema_version` and a `kind`-discriminated element union, `load_spec`, `dump_spec`, `MIGRATIONS`, `export_json_schemas`, `SourceRef {"$source": ...}`, `Quantity {value, units}` | Copy this pattern exactly for `SignalSpec`. |
 | flex-pse `flexcore.exceptions` | `FlexError` → `FlexConfigError(field=, value=)` and `FlexDataError`. Every message says what was wrong and what to do | Mirror the hierarchy and message rule in `flexsignal.core.exceptions` without importing flexcore (see §4.1 on import direction). |
 | flex-pse `flexops` | `apply_spec(model, elements)` applies `fix`, `unfix` and `dispatch` to a live model. `set_external_dispatch(var, series)`. Price and exogenous profiles are construction options, set before build. `TimeBlock` uses a naive local-time index, so `index_of` raises on off-grid timestamps | Our flex-pse adapter emits element dicts aligned to `TimeBlock.datetime_index`, or patches the spec before build. |
-| flex-pse `flexparameterize` (v0.2.0, our target) | `TagMap`, `check_sufficiency`, `apply_to_model(model, df, tagmap)`, a `Regressor` protocol, and the `constant_intensity` and `multilinear` regressors. ARIMA is reserved in v0.2.0. On flex-pse's `arima_integration` branch, `ArimaRegressor` **refuses NaNs and uneven steps** and tells the user to "resample and impute" | flex-signal is that missing "resample and impute" step. Our output must be a regular-grid DataFrame with no gaps and columns named by model alias. |
-| flex-pse `test_time_series_data/impute_timeseries.py` | Standalone linear-interpolation script | Replace it with a flex-signal pipeline. |
+| flex-pse `flexparameterize` (v0.3.0, the latest release) | `TagMap`, `check_sufficiency`, `apply_to_model(model, df, tagmap)`, a `Regressor` protocol, and the `constant_intensity` and `multilinear` regressors. ARIMA is still reserved in v0.3.0. On flex-pse's `arima_integration` branch, `ArimaRegressor` **refuses NaNs and uneven steps** and tells the user to "resample and impute" | flex-signal is that missing "resample and impute" step. Our output must be a regular-grid DataFrame with no gaps and columns named by model alias. |
+| flex-pse `flexparameterize/tests/test_time_series_data/` (on the `arima_integration` branch; not in any release yet) | Public hourly biogas data (`bio_gas_generation.csv`: feed volume, TS %, biogas m³/h; ~1,440 rows), its 15-minute linear interpolation, and the `impute_timeseries.py` script that made it | The **one permitted outside dataset** (see §8, "Test data"). flex-signal's `interpolate` step supersedes the script, and must reproduce its output. |
 | flex-orchestrator | Plugin system: entry-point group `flex_orchestrator.plugins`, `@command(params=PydanticModel)`, `orch.store_data` / `get_data`, events. **The `StudyConfig` sweep union is closed.** `fitting/prep.py` and `inputs/resolve.py` already do basic align, resample and gap filling | flex-orchestrator will wrap flex-signal directly once flex-signal is stable. We ship no plugin; instead our API follows the orchestrator's calling conventions (§4.3). |
 | Acquirium (alpha, 0.4.0a8; build against `upstream/main`) | Python client returns **polars**. Data is stored in UTC. Writes need `register_streams` and then `insert_timeseries_arrow`. Derived streams are `aq.App` subclasses running **inside the server**; their module digest is pinned, and outputs must contain no nulls. There are no quality-flag columns and only one value per `(stream, ts)` | Use pandas internally and convert at the boundary. Ship one stable `PipelineApp` class whose behaviour comes entirely from parameters (the spec). Write flags as separate streams. Store forecast issuances as experiment runs or as per-horizon streams. |
 | flows-prep (legacy, py<3.12) | Tukey and rate-of-change outlier removal, stuck-value detection, short-gap interpolation with a consecutive-NaN limit, lagged ElasticNet imputation, Fourier features, blocked CV, clipping to bounds. PyPOTS was planned but never committed | This is the method inventory to port as thin steps. Keep its config ideas, not its code. |
 | flows-mpc (legacy) | statsforecast MSTL, statsmodels, a Keras seq2seq model, MLflow tracking | Confirms Nixtla and statsmodels as the forecasting backbone. Drop TensorFlow and use torch-based extras. |
-| svcw-app | Driver for the SVCW SCADA CSV (38 hourly tags, 2020–2023, with gaps and duplicates) | Real-data integration fixture. |
+
+**No data from other repositories, with one exception.** These repos inform the design only. flex-signal's tests,
+examples, benchmarks and docs use data generated inside this repo, plus flex-pse's public test dataset (see §8,
+"Test data").
 
 **Python version.** flex-pse needs ≥3.11 and pandas ≥3. flex-orchestrator needs ≥3.12. Acquirium needs ≥3.11.
 Python 3.10 reached end of life in October 2026, and darts, pint and sklearn 1.8 have already dropped it.
@@ -96,7 +99,7 @@ src/flexsignal/
 import-linter layering (same tool as flex-pse):
 
 ```
-core <- spec <- backends <- steps <- pipeline <- {io, eval, api} <- integrations.{flexpse | acquirium}
+core <- {spec | io} <- backends <- steps <- pipeline <- {eval | api} <- integrations.{flexpse | acquirium}
 ```
 
 Each `integrations.*` package imports its third-party target only inside itself. Each is behind its own extra.
@@ -271,7 +274,7 @@ The spec mirrors `flexcore.config` one for one:
 
 ## 4. Ecosystem integration
 
-### 4.1 flex-pse (`flex-signal[flexpse]`, targeting flex-pse v0.2.0)
+### 4.1 flex-pse (always the latest flex-pse release; currently v0.3.0)
 
 flex-signal has two direct points of contact with flex-pse:
 
@@ -305,8 +308,8 @@ elements = fsp.to_elements(grid, mapping={
 spec_dict = fsp.patch_spec(spec_dict, grid, {"costing.energy_prices.electrical": "price"})
 ```
 
-`arima_history(...)`, for seeding an ARIMA surrogate, is deferred until flex-pse ships the ARIMA surrogate past
-v0.2.0.
+`arima_history(...)`, for seeding an ARIMA surrogate, is deferred until a flex-pse release ships the ARIMA surrogate.
+v0.3.0 does not.
 
 Rules the adapter enforces:
 
@@ -391,7 +394,7 @@ Default: include it.
 | `features` | tsfresh | Feature extraction for regression imputers |
 | `units` | pint, pint-pandas | Boundary unit conversion. Pint 0.26 needs Python ≥3.12 |
 | `symbolic` | pysr | Symbolic-regression correction models. Needs a Julia runtime |
-| `flexpse` | `flex-pse[parameterize]==0.2.0` | Used only in tests and for `to_parameterize`. flex-pse is the importer, not a dependency of core. The pin is bumped as flex-pse releases, after its integration tests pass |
+| `flexpse` | flex-pse with `parameterize`, **the latest release** (now v0.3.0) | Used only in tests and for `to_parameterize`. flex-pse is the importer, not a dependency of core. flex-pse is not on PyPI, and PyPI rejects git URLs in a published package's metadata. So until flex-pse is published, the pin lives in `environment.yml` and CI as `flex-pse[parameterize] @ git+https://github.com/flex-pse/flex-pse.git@<tag>`, the same way flex-orchestrator pins it. The tag's dist-info still says 0.1.0, so pin by tag, never by `==version`. Once flex-pse is on PyPI, the extra becomes `flex-pse[parameterize]>=<latest>` |
 | `acquirium` | acquirium (tracks `main`) | Source, sink and PipelineApp (phase 7) |
 | `dev` | pytest, pytest-cov, pytest-xdist, ruff, black, import-linter, pre-commit | Same pins as flex-pse |
 
@@ -442,7 +445,7 @@ thin pandas-native protocol on sklearn's `BaseEstimator`, and treat sktime and d
 
 ## 7. Documentation
 
-The documentation mirrors flex-pse's setup (`docs/`, `.github/workflows/docs.yml` at v0.2.0), so the two projects
+The documentation mirrors flex-pse's setup (`docs/`, `.github/workflows/docs.yml`; first mirrored from v0.2.0 and kept in step with each flex-pse release, now v0.3.0), so the two projects
 read as one ecosystem.
 
 **Tooling**
@@ -489,7 +492,7 @@ docs/
   how_to/            clean_a_stream, calibrate_against_a_reference, impute_gaps, evaluate_imputers,
                      forecast_and_backtest, feed_flexparameterize, apply_to_a_flexpse_model,
                      save_and_load_a_fitted_pipeline, write_a_backend
-  examples/          runnable scripts on the synthetic and SVCW fixtures
+  examples/          runnable scripts on data from flexsignal.testing.synthetic
   reference/         flexsignal.core, spec, steps (generated tables), backends, pipeline, api,
                      integrations.flexpse, glossary
   changelog.md       includes CHANGELOG.md
@@ -513,20 +516,37 @@ build that passes. A feature without docs is not finished.
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
 | 0 | Scaffold: pyproject (setuptools, src layout, `[docs]` extra), ruff with `D` rules, black, import-linter, pytest markers (`unit`, `component`, `integration`), CI on 3.11–3.14, CONTRIBUTING, CHANGELOG, issue and PR templates mirroring flex-pse. Docs skeleton: Sphinx `conf.py`, furo, the §7 layout with stub pages, `docs.yml` deploying to GitHub Pages | `pytest`, the lint hooks and `sphinx-build -W` pass on an empty package; the Pages site is live |
-| 1 | `core` (SignalFrame, flags, exceptions, registries), `spec` (schema, io, migrations, JSON Schema, named input slots), `select` and `clean` steps, `interpolate`, parquet io, `Pipeline` fit/transform plus `to_payload`/`from_payload`, `api.run`/`api.fit` | The A/B/C/D example runs from Python and from JSON with an identical result; spec round trip passes; JSON Schema is committed; first `tests/contract/` tests pass (JSON round trip, pickling) |
-| 2 | `calibrate`, `regression`/`kalman`/`tiered` imputers, `eval` masking benchmark | Imputer comparison report on the SVCW fixture; replaces flex-pse `impute_timeseries.py` |
-| 3 | flex-pse v0.2.0 integration: `to_grid`, `to_parameterize`, `to_elements`, `patch_spec` | End-to-end: raw CSV → clean → `flexparameterize.apply_to_model` (multilinear) → `flexops.apply_spec` with our elements. import-linter shows no flex-pse import outside `integrations.flexpse`, and `import flexsignal` loads no pyomo. `arima_history` is added when flex-pse releases ARIMA |
-| 4 | Forecasting: statsmodels, skforecast and statsforecast backends, plus `backtest` and `api.backtest` | Backtest table on the SVCW data; forecast applied as `dispatch` to a model |
+| 1 | `core` (SignalFrame, flags, exceptions, registries), `spec` (schema, io, migrations, JSON Schema, named input slots), `select` and `clean` steps, `interpolate`, parquet io, `Pipeline` fit/transform plus `to_payload`/`from_payload`, `api.run`/`api.fit`, and the `flexsignal.testing.synthetic` generator | A cleaning pipeline gives identical output from Python and from JSON, and flags exactly the injected faults in synthetic data; spec round trip passes; JSON Schema is committed; first `tests/contract/` tests pass (JSON round trip, pickling) |
+| 2 | `calibrate`, `regression`/`kalman`/`tiered` imputers, `eval` masking benchmark | On a synthetic A/B/C/D plant with known true A, `A_clean` is within tolerance of the truth; the imputer comparison report runs on synthetic data and on the flex-pse biogas data; an `interpolate` pipeline reproduces flex-pse's `imputed_bio_gas_generation.csv` |
+| 3 | flex-pse integration against the latest release (v0.3.0 today): `to_grid`, `to_parameterize`, `to_elements`, `patch_spec` | End-to-end: synthetic raw data → clean → `flexparameterize.apply_to_model` (multilinear) → `flexops.apply_spec` with our elements. import-linter shows no flex-pse import outside `integrations.flexpse`, and `import flexsignal` loads no pyomo. A scheduled CI job also runs the flex-pse tests against flex-pse `main`, so breakage shows up before the next release. `arima_history` is added when flex-pse releases ARIMA |
+| 4 | Forecasting: statsmodels, skforecast and statsforecast backends, plus `backtest` and `api.backtest` | On synthetic data with known seasonality, a backtest beats a seasonal-naive baseline (also reported on the biogas data); the forecast is applied as `dispatch` to a model |
 | 5 | `[pypots]`, `[foundation]`, `[anomaly]`, `[darts]`/`[sktime]` adapters | Each extra has an adapter test, skipped when the extra isn't installed |
 | 6 | Hardening for a stable release: complete the orchestrator contract suite (§4.3), docs, the first stable `schema_version`, and an optional test against the orchestrator memory backend | Contract suite green. Hand-off to flex-orchestrator, which writes its own wrapper |
-| 7 | Acquirium (against `main`): source, sink and `PipelineApp`; forecast runs stored as experiments | Live App deployed on a local Acquirium server with svcw-app data; flags streams visible |
+| 7 | Acquirium (against `main`): source, sink and `PipelineApp`; forecast runs stored as experiments | Live App deployed on a local Acquirium server, fed synthetic data by a test driver written in this repo; flags streams visible |
 
-Test data:
+**Test data.** flex-signal's tests, examples, benchmarks and docs use exactly two sources of data. Nothing else
+from other repositories, and no plant or customer data, is allowed.
 
-- the SVCW SCADA CSV (from svcw-app);
-- the flex-pse `test_time_series_data` series;
-- synthetic series with known injected faults (drift, stuck sensor, spikes, gaps), so every cleaner has a
-  deterministic unit test.
+1. **flex-pse's public test dataset.** This is `src/flexparameterize/tests/test_time_series_data/` in flex-pse:
+   - `bio_gas_generation.csv` (hourly, raw), adapted from the public
+     [Biogas-Time-Series-ML-Engine](https://github.com/MuneebX00/Biogas-Time-Series-ML-Engine) repo;
+   - `imputed_bio_gas_generation.csv`, its 15-minute interpolation.
+
+   We vendor these into `src/flexsignal/tests/data/flexpse/` in M1 and do not read them from a flex-pse install,
+   so tests have no flex-pse dependency. A `README` there records the source, the flex-pse commit they were copied
+   from, and their licence. Before vendoring, confirm the upstream repo's licence permits redistribution.
+2. **`flexsignal.testing.synthetic`**, a seeded generator built in M1, which produces plant-like multivariate
+   series:
+
+- daily and weekly seasonality and noise;
+- correlated streams and on/off regimes (the C and D streams of §3.5);
+- an intermittent trusted reference;
+- injected faults (spikes, stuck sensors, drift, steps, gaps of controlled length).
+
+Each series comes with its ground truth. Because the truth is known, acceptance tests can assert accuracy (for
+example "`A_clean` is within tolerance of the true A"), which real data cannot support. Generated fixtures are
+deterministic for a given seed. Small ones may be committed as Parquet under the package's `tests/data/`. Users
+can run any pipeline on their own data, but none of it is shipped here.
 
 ---
 
@@ -538,7 +558,7 @@ Test data:
 |---|---|
 | D1 | **flex-pse imports flex-signal, never the reverse at import time.** Core has no flex-pse dependency. We mirror the flexcore conventions (exceptions, `_StrictModel`, `SourceRef`, `Quantity`) rather than import them. The only direct contact points are the duck-typed `TimeBlock` grid and handing data to flexparameterize (§4.1). Enforced by import-linter |
 | D2 | **Calibrate A to a trusted, intermittent reference B.** `calibrate` fits A→B where B is valid and `fit_when` holds, uses B directly where it is available (`prefer_reference`), and optionally refits on a rolling window to follow drift (§3.5) |
-| D3 | **Target flex-pse v0.2.0**, the same pin as flex-orchestrator. CI pins it, and we bump the pin and the tests as flex-pse releases. ARIMA-specific helpers wait for an ARIMA release |
+| D3 | **Always track the latest flex-pse release** (v0.3.0 as of 2026-11-09, the same pin as flex-orchestrator). Each new flex-pse release bumps the pin, the tests and the docs in the same PR. A scheduled job tests against flex-pse `main` to catch breakage early. ARIMA-specific helpers wait for a release that ships ARIMA |
 | D4 | **Import name `flexsignal`**, matching flex-pse. flex-orchestrator will adopt the same naming |
 | D5 | **pandas internally**; polars only at the Acquirium boundary |
 | D6 | **No orchestrator plugin in flex-signal.** flex-orchestrator will write a direct wrapper once flex-signal is stable. flex-signal guarantees an orchestrator-ready API (§4.3), verified by contract tests |
