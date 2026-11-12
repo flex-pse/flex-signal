@@ -25,8 +25,9 @@ from flexsignal.steps._base import StreamStep, check_streams, remove_values, sec
 
 __all__ = ["Expression", "Hampel", "Range", "RateOfChange", "Stuck", "Tukey"]
 
-HAMPEL_MAD_SCALE = 1.4826
-"""Scales a median absolute deviation to a standard deviation for normal data."""
+_MAD_TO_SIGMA = 1.4826
+"""1 / Φ⁻¹(0.75): turns a median absolute deviation into a standard deviation for
+normal data. A fixed conversion, not a setting; tune ``Hampel.n_sigma`` instead."""
 
 
 def _bound(value: float | Quantity | None, units: str | None, stream: str, field: str):
@@ -187,7 +188,9 @@ class Hampel(StreamStep):
     Each value is compared with the median of a centred time window. It is
     flagged ``OUTLIER`` if it lies more than ``n_sigma`` robust standard deviations
     from that median. The robust standard deviation is
-    1.4826 × the window's median absolute deviation. See Pearson, R. K. (2002),
+    1.4826 × the window's median absolute deviation; 1.4826 is the fixed factor
+    that makes this match the standard deviation for normal data, so ``n_sigma``
+    is the only threshold to tune. See Pearson, R. K. (2002),
     "Outliers in process modeling and identification", IEEE Trans. Control
     Systems Technology 10(1), 55-63, doi:10.1109/87.974338.
 
@@ -232,7 +235,7 @@ class Hampel(StreamStep):
             mad = rolling.apply(
                 lambda w: np.nanmedian(np.abs(w - np.nanmedian(w))), raw=True
             )
-            scale = np.maximum(HAMPEL_MAD_SCALE * mad, self.min_scale)
+            scale = np.maximum(_MAD_TO_SIGMA * mad, self.min_scale)
             remove[col] = (series - median).abs() > self.n_sigma * scale
         return remove_values(sf, pd.DataFrame(remove), Flag.OUTLIER)
 
