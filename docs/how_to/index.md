@@ -1,11 +1,18 @@
 # How-to guides
 
-Task-focused guides. Each guide arrives with the milestone that builds the feature it uses.
+Task-focused guides. Every code block on these pages runs in CI, so the guides stay correct.
+
+```{toctree}
+:maxdepth: 1
+
+clean_a_stream
+save_and_load_a_fitted_pipeline
+```
+
+Each future guide arrives with the milestone that builds the feature it uses:
 
 | Guide | Milestone |
 |---|---|
-| Clean a stream | M1 |
-| Save and load a fitted pipeline | M1 |
 | Calibrate a stream against a reference | M2 |
 | Impute gaps | M2 |
 | Evaluate imputers | M2 |

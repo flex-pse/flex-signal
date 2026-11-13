@@ -121,15 +121,23 @@ We do **not** create a new timeseries library. A `SignalFrame` is a thin wrapper
 - `flags`: `pd.DataFrame` of the same shape, `uint16` bitmask per sample.
 - `meta`: `dict[str, StreamMeta]` holding units (pyomo/pint-parseable string, e.g. `"m^3/hr"`), quantity kind, source
   reference (Acquirium `ref_uri` or a file), and a description.
-- `history`: an ordered list of the step records that touched each column (step name, spec hash, parameters).
-  This is the provenance.
+- `history`: an ordered list of step records (index, kind, name, spec hash, rows before and after, streams added
+  and removed, samples changed per stream). This is the provenance. The pipeline writes it by comparing each
+  step's input and output, so steps don't record themselves and the record is always exact.
 
 Quality flags are an `IntFlag` bitmask:
 
 ```
-RAW=0  MISSING  OUT_OF_RANGE  RATE_OF_CHANGE  OUTLIER  STUCK  MANUAL
-CORRECTED  IMPUTED_SHORT  IMPUTED_MODEL  FORECAST  DERIVED  RESAMPLED
+RAW=0  MISSING  OUT_OF_RANGE  RATE_OF_CHANGE  OUTLIER  STUCK  MANUAL  EXCLUDED
+CORRECTED  IMPUTED_SHORT  IMPUTED_MODEL  FORECAST  DERIVED  RESAMPLED  NO_SAMPLE
 ```
+
+`EXCLUDED` (added in M1) marks data a selection rule left out on purpose, e.g. "only while the pump runs". It is
+not a quality judgement, and imputers never fill it.
+
+`NO_SAMPLE` (added in M1, D13) marks the rows a stream gets, when several inputs are joined, only because another
+input has a sample at that time. It is always set together with `MISSING`. `align`, `resample` and `interpolate`
+skip these rows, so an off-grid source aligns to its own samples, not to the join's padding.
 
 A cleaning step does not delete data. It sets the value to NaN and sets a flag bit. An imputer fills NaNs and
 sets `IMPUTED_*`. A downstream consumer can therefore always ask which values are real.
@@ -139,19 +147,23 @@ call. The Acquirium adapter converts polars to and from this frame at the bounda
 
 ### 3.3 Step protocol
 
-Steps follow the scikit-learn contract, so users can drop to raw sklearn when they need to:
+Steps follow scikit-learn's fit/transform split, made functional (settled in M1, D9):
 
 ```python
-class Step(Protocol):
-    name: str
-    def fit(self, sf: SignalFrame) -> "Step": ...          # stateless steps: no-op
-    def transform(self, sf: SignalFrame) -> SignalFrame: ...
-    def to_spec(self) -> StepSpec: ...                      # declarative config
-    def fitted_state(self) -> dict | Artifact: ...          # JSON params where possible, else native save
+class StepSpec(StrictModel):            # frozen pydantic model: the step *is* its spec
+    kind: str
+    name: str | None
+    def fit(self, sf: SignalFrame) -> dict: ...                         # JSON-able state; {} if stateless
+    def transform(self, sf: SignalFrame, state: dict) -> SignalFrame: ...
 
-class Forecaster(Step, Protocol):
-    def predict(self, sf: SignalFrame, horizon: str | int, *, exog_future: SignalFrame | None = None) -> SignalFrame: ...
+class Forecaster(StepSpec):             # M4
+    def predict(self, sf, state, horizon, *, exog_future=None) -> SignalFrame: ...
 ```
+
+The step object holds configuration only, and fitted state is an explicit JSON dict. A Python-built and a
+JSON-loaded pipeline are then the same objects and give bit-identical output. Fitting never changes the spec,
+and a fitted pipeline saves as JSON and pickles for Ray. `Pipeline.fit` / `FittedPipeline.transform` give the
+familiar sklearn feel at the pipeline level.
 
 - **Backends** are registered by a string key, for example `"sklearn:HuberRegressor"`, `"statsmodels:SARIMAX"`,
   `"pypots:SAITS"`, `"nixtla:AutoETS"`, `"chronos:chronos-2"`, or `"pkg.mod:Class"` for user code. Each key maps
@@ -168,7 +180,10 @@ class Forecaster(Step, Protocol):
 ### 3.4 Conditions and selection
 
 Conditions use a small expression language that compiles to a boolean mask. It uses
-`pandas.DataFrame.eval`/`query` syntax over stream names: `"C == 0 and D == 0 and B > 0"`. On top of that it adds:
+`pandas.DataFrame.eval`/`query` syntax over stream names: `"C == 0 and D == 0 and B > 0"`. Before pandas sees a
+condition, `check_condition` parses it with `ast` and allows only stream names, numbers, arithmetic, comparisons,
+boolean operators and a fixed list of math functions, so a condition can't run code (D15). New helpers must be
+added to that allowlist explicitly. On top of that it adds:
 
 - duration helpers: `held("C == 0", "30min")` means the condition has been true for at least 30 minutes;
 - flag predicates: `is_raw("B")`, `not flagged("A", "OUTLIER")`.
@@ -359,7 +374,7 @@ flex-pse and its regressors:
 | **Ray-safe** | No global mutable state. Fitted pipelines are picklable. Random seeds are explicit in the spec. Backends are imported lazily on workers |
 | **Progress and errors** | An optional `progress: Callable[[float, str], None]` that the orchestrator's `Progress` adapts to. All errors subclass `SignalError` with `field=` dotted paths, so the command ledger records something actionable |
 | **Embeddable schema** | `SignalSpec` and its JSON Schema are exported with stable `kind` names and `schema_version` migrations, so `StudyConfig` can embed a `signals:` list without redefining it |
-| **Time semantics** | UTC internally. Local naive time appears only at `flexpse.to_grid(..., timezone=)`, matching the orchestrator's `model_inputs.timezone` handling |
+| **Time semantics** | UTC internally. Naive input timestamps are taken as the machine's local time with a `NaiveTimestampWarning` (D14), so the orchestrator should always pass tz-aware data or set `timezone`. Local naive time is emitted only at `flexpse.to_grid(..., timezone=)`, matching the orchestrator's `model_inputs.timezone` handling |
 
 **Verification:** `tests/contract/` exercises this contract without importing flex-orchestrator. It wraps the
 API in a pydantic params model, JSON round-trips specs, results and payloads, and pickles a fitted pipeline. An
@@ -439,7 +454,7 @@ thin pandas-native protocol on sklearn's `BaseEstimator`, and treat sktime and d
 | Impute | `pypots` | PyPOTS `[pypots]` |
 | Impute | `tiered` | Composition of the methods above, routed by gap length |
 | Forecast | `forecast`, `backtest` | statsmodels, skforecast, statsforecast, neuralforecast, chronos, pypots, darts/sktime adapters |
-| Derive | `expression`, `function` (`"pkg.mod:fn"`) | pandas eval / user code |
+| Derive | `expression`, `function` (`"pkg.mod:fn"`) | checked conditions (D15) / user code. `function` imports and runs code by design, so it must be opt-in for specs from elsewhere |
 
 ---
 
@@ -488,11 +503,12 @@ docs/
   getting_started/   installation (core + extras matrix), ten_minutes (the A/B/C/D example end to end)
   explanation/       signal_frame_and_flags, spec_schema, conditions, steps_and_backends, calibration,
                      imputation_tiers, forecasting_and_backtesting, time_and_units, flexpse_integration,
-                     orchestrator_contract
+                     orchestrator_contract, acquirium_integration (M7)
   how_to/            clean_a_stream, calibrate_against_a_reference, impute_gaps, evaluate_imputers,
                      forecast_and_backtest, feed_flexparameterize, apply_to_a_flexpse_model,
-                     save_and_load_a_fitted_pipeline, write_a_backend
-  examples/          runnable scripts on data from flexsignal.testing.synthetic
+                     save_and_load_a_fitted_pipeline, write_a_backend, deploy_a_pipeline_app (M7)
+  tutorials/         index page linking the exported marimo tutorials (D12); the notebooks live in /tutorials
+  examples/          runnable scripts on flexsignal.testing.synthetic data and the vendored flex-pse biogas data
   reference/         flexsignal.core, spec, steps (generated tables), backends, pipeline, api,
                      integrations.flexpse, glossary
   changelog.md       includes CHANGELOG.md
@@ -501,6 +517,38 @@ docs/
 
 **Examples are tested.** Every script in `docs/examples/` and every how-to code block runs in CI under the
 `integration` marker. Examples that need an optional extra are skipped when it isn't installed.
+
+**Tutorials (D12).** A numbered series of [marimo](https://marimo.io) notebooks in `tutorials/` teaches the API
+from simple to complex. marimo is also what flex-pse-examples uses. Each milestone adds the tutorials for the
+features it ships, in the same PR as the code, so no tutorial is written against an API that has since changed.
+
+- **Files.** `tutorials/NN_short_name.py`, numbered without gaps (a unit test checks the order). They are plain
+  `.py` marimo files, so they diff cleanly and ruff and black check them. Tutorials are exempt only from the `D`,
+  `B018` (marimo displays a cell's last expression) and `E501` (markdown table rows) rules.
+- **Data.** Only `flexsignal.testing.synthetic`, plus the vendored biogas data once it is in (see "Test data").
+  Each tutorial injects faults at known places and scores every step against them: caught, missed, false alarms.
+- **Shape.** Prose goes in `mo.md` cells, with one idea per section and a short "Next" at the end. Interactive
+  controls (`mo.ui.slider`, `dropdown`, `switch`) appear wherever a parameter's effect is the lesson. Plots use
+  matplotlib with a shared palette and `style(ax)` helper, defined in each notebook so it stands alone. Lines
+  that exist only for the notebook (`mo.md`, `mo.vstack`, `mo.ui`, ...) carry a `# Display only (marimo)` or
+  `# Notebook control (marimo)` comment, so readers can tell them from the flex-signal code they will copy.
+  Tutorial 01 builds its `SignalFrame` from a plain DataFrame with `from_frame`; later tutorials use the
+  `case.signal()` shortcut.
+- **Tested.** The last code cell asserts the results the prose claims, for example "removed exactly the injected
+  faults". The `integration` tier runs every tutorial as a script (`python tutorials/NN_x.py`) with the
+  `[tutorials]` extra, so a wrong claim fails CI, not just a crash.
+- **Published.** `docs.yml` runs `marimo export html` on each tutorial, and the export fails if a cell raises.
+  `conf.py` copies the static pages into the site next to `docs/tutorials/index.md`. The static pages show code
+  and results. The controls only work when a tutorial is run locally (`marimo edit`).
+- **Kept here, not in flex-pse-examples.** flex-pse-examples holds applied case studies and tracks flex-pse
+  `main`. These tutorials teach this package's API and must change with it. A cross-package case study goes to
+  flex-pse-examples once the flex-pse bridge exists (M3 or later).
+- **Browser-run pages (later).** Pyodide ships pandas 3, scipy, scikit-learn, statsmodels and pyarrow, so the
+  cleaning tutorials could run live in the browser (`marimo export html-wasm`). That needs two things:
+  flex-signal must be installable there (on PyPI from M6, or a wheel served with the site), and `pandera` must
+  be dropped from the core dependencies or made optional, because Pyodide doesn't ship it and nothing imports it
+  yet. Tutorials whose steps can't run in a browser (pyomo, torch) would keep static pages, or use precomputed
+  results as flex-pse-examples does.
 
 **Writing standard.** We follow flex-pse's `CONTRIBUTING.md`: plain, direct prose written for a human reviewer,
 and error messages that say what went wrong and what to do. We also mirror its GitHub issue templates (including
@@ -511,20 +559,210 @@ build that passes. A feature without docs is not finished.
 
 ---
 
-## 8. Roadmap
+## 8. Milestones
 
-| Phase | Deliverable | Exit criteria |
-|---|---|---|
-| 0 | Scaffold: pyproject (setuptools, src layout, `[docs]` extra), ruff with `D` rules, black, import-linter, pytest markers (`unit`, `component`, `integration`), CI on 3.11–3.14, CONTRIBUTING, CHANGELOG, issue and PR templates mirroring flex-pse. Docs skeleton: Sphinx `conf.py`, furo, the §7 layout with stub pages, `docs.yml` deploying to GitHub Pages | `pytest`, the lint hooks and `sphinx-build -W` pass on an empty package; the Pages site is live |
-| 1 | `core` (SignalFrame, flags, exceptions, registries), `spec` (schema, io, migrations, JSON Schema, named input slots), `select` and `clean` steps, `interpolate`, parquet io, `Pipeline` fit/transform plus `to_payload`/`from_payload`, `api.run`/`api.fit`, and the `flexsignal.testing.synthetic` generator | A cleaning pipeline gives identical output from Python and from JSON, and flags exactly the injected faults in synthetic data; spec round trip passes; JSON Schema is committed; first `tests/contract/` tests pass (JSON round trip, pickling) |
-| 2 | `calibrate`, `regression`/`kalman`/`tiered` imputers, `eval` masking benchmark | On a synthetic A/B/C/D plant with known true A, `A_clean` is within tolerance of the truth; the imputer comparison report runs on synthetic data and on the flex-pse biogas data; an `interpolate` pipeline reproduces flex-pse's `imputed_bio_gas_generation.csv` |
-| 3 | flex-pse integration against the latest release (v0.3.0 today): `to_grid`, `to_parameterize`, `to_elements`, `patch_spec` | End-to-end: synthetic raw data → clean → `flexparameterize.apply_to_model` (multilinear) → `flexops.apply_spec` with our elements. import-linter shows no flex-pse import outside `integrations.flexpse`, and `import flexsignal` loads no pyomo. A scheduled CI job also runs the flex-pse tests against flex-pse `main`, so breakage shows up before the next release. `arima_history` is added when flex-pse releases ARIMA |
-| 4 | Forecasting: statsmodels, skforecast and statsforecast backends, plus `backtest` and `api.backtest` | On synthetic data with known seasonality, a backtest beats a seasonal-naive baseline (also reported on the biogas data); the forecast is applied as `dispatch` to a model |
-| 5 | `[pypots]`, `[foundation]`, `[anomaly]`, `[darts]`/`[sktime]` adapters | Each extra has an adapter test, skipped when the extra isn't installed |
-| 6 | Hardening for a stable release: complete the orchestrator contract suite (§4.3), docs, the first stable `schema_version`, and an optional test against the orchestrator memory backend | Contract suite green. Hand-off to flex-orchestrator, which writes its own wrapper |
-| 7 | Acquirium (against `main`): source, sink and `PipelineApp`; forecast runs stored as experiments | Live App deployed on a local Acquirium server, fed synthetic data by a test driver written in this repo; flags streams visible |
+Each milestone is a tagged release with a CHANGELOG entry. Milestone *Mn* is the same thing as "phase n"
+elsewhere in this document.
 
-**Test data.** flex-signal's tests, examples, benchmarks and docs use exactly two sources of data. Nothing else
+The versions follow semver. During 0.x the API and `schema_version` may change, and every spec change ships with
+a migration. 1.0.0 is the stable hand-off to flex-orchestrator. Acquirium comes after that, as 1.1.0 (D7).
+
+```
+M0 ─► M1 ─┬─► M2 ─┬─► M4 ─► M5 ─► M6 (1.0) ─► M7 (Acquirium)
+          └─► M3 ─┘   (M3 can run alongside M2)
+```
+
+| Milestone | Version | Theme | Headline acceptance test | Depends on |
+|---|---|---|---|---|
+| M0 | 0.0.1 | Scaffold | CI, lint, import-linter and `sphinx-build -W` green on an empty package; Pages site live | — |
+| M1 | 0.1.0 | Core, spec and cleaning | A cleaning pipeline gives identical output from Python and from JSON, and catches every injected fault in the synthetic fixtures | M0 |
+| M2 | 0.2.0 | Calibrate and impute | The A/B/C/D example recovers the true A within tolerance; the imputer benchmark runs on synthetic and biogas data | M1 |
+| M3 | 0.3.0 | flex-pse bridge | Synthetic raw data → clean → `flexparameterize` fit → `apply_spec` on a model built with the latest flex-pse release (v0.3.0 today) | M1 (M2 for the full demo) |
+| M4 | 0.4.0 | Forecasting | Backtest on synthetic data with known seasonality beats a seasonal-naive baseline; the forecast reaches a model as `dispatch` | M2, M3 |
+| M5 | 0.5.0 | Advanced backends | PyPOTS, Chronos, anomaly and darts/sktime adapters pass their tests, skipped when an extra is missing | M2, M4 |
+| M6 | 1.0.0 | Stable release | Orchestrator contract suite green; schema frozen at 1.0.0; published to PyPI; hand-off | M1–M5 |
+| M7 | 1.1.0 | Acquirium | A live `PipelineApp` runs on a local Acquirium server (`main`), fed synthetic data by an in-repo test driver | M6 |
+
+Every milestone also needs, per the definition of done in §7:
+
+- its docs pages, with `-W` passing;
+- its tutorials (D12, §7), built in the same milestone: each runs as a script in CI, exports to a static page,
+  and asserts what it claims;
+- a CHANGELOG entry;
+- every test carrying exactly one tier marker;
+- import-linter green;
+- a git tag.
+
+### M0: Scaffold (0.0.1)
+
+- **Scope:**
+  - `pyproject.toml`: setuptools, src layout, `requires-python >=3.11`, the core dependencies, and
+    `[testing]`, `[dev]` and `[docs]`. Other extras are declared in the milestone whose code uses them.
+  - `src/flexsignal/__init__.py` with `__version__`.
+  - ruff (`E,F,I,B,UP,D`, google), black 88, and `.importlinter` with the layer contract and the "no flex-pse
+    outside `integrations.flexpse`" rule.
+  - pre-commit with a pre-push hook; pytest markers, and a root `conftest.py` that requires exactly one tier
+    marker per test.
+  - `ci.yml` mirroring flex-pse's latest release (uv installs; 3.11–3.14 on Ubuntu, 3.13 on macOS and Windows;
+    one coverage run with `codecov.yml`; a wheel-based standard-install check), `docs.yml` (GitHub Pages) and
+    `publish.yml`.
+  - `CONTRIBUTING.md`, `CHANGELOG.md`, `LICENSE` (Apache-2.0, as flex-pse), issue and PR templates.
+  - Docs skeleton: `conf.py`, the §7 layout with one index page per section listing its planned pages, and an
+    empty `_ext/flexsignaldoc.py`.
+- **Acceptance:** a fresh clone passes `pip install -e .[dev,docs]`, then `pre-commit run -a`, `pytest`,
+  `lint-imports` and `sphinx-build -W`. The site is published.
+
+### M1: Core, spec and cleaning (0.1.0)
+
+- **Scope:**
+  - `core`: `SignalFrame`, the `Flag` bitmask, `StreamMeta`, the `SignalError` hierarchy, and the step and
+    backend registries with the entry-point group.
+  - `spec`: `SignalSpec`, the discriminated step union, named input slots, `load_spec`/`dump_spec`, `MIGRATIONS`,
+    `$source`, `Quantity`, `spec_hash`, and the committed JSON Schema.
+  - `select` steps: `align`, `resample`, `window`, `mask`, `rename`, `combine`, `shift`.
+  - `clean` steps: `range`, `rate_of_change`, `stuck`, `hampel`, `tukey`, `expression`.
+  - `impute.interpolate` with `max_gap`.
+  - Parquet I/O with units and flags in the Arrow metadata, plus CSV.
+  - `Pipeline` and `FittedPipeline` (`fit`, `transform`, `to_payload`/`from_payload`, `save`/`load`, `report`).
+  - `api.run` and `api.fit`.
+  - `flexsignal.testing.synthetic`: a seeded generator of plant-like data with known injected faults (spikes,
+    stuck values, drift, out-of-range values, gaps) and their ground truth.
+  - Vendor the flex-pse biogas test data into `src/flexsignal/tests/data/flexpse/` with a provenance README,
+    once its upstream licence is confirmed to allow redistribution (see "Test data" below).
+- **Acceptance:**
+  - Each cleaner flags exactly the injected faults in its deterministic unit test.
+  - A Python-built and a JSON-loaded pipeline give bit-identical output.
+  - `load_spec(dump_spec(s)) == s` for every step kind.
+  - Contract tests: specs, results and payloads JSON round-trip, and a fitted pipeline pickles.
+  - `import flexsignal` imports no torch, pyomo or flex-pse (checked in a test).
+- **Docs:**
+  - getting_started/installation;
+  - explanation pages: signal_frame_and_flags, spec_schema, steps_and_backends, time_and_units;
+  - how_to/clean_a_stream and how_to/save_and_load_a_fitted_pipeline;
+  - generated step, spec and flag tables.
+- **Tutorials:**
+  - 01 A first look: `SignalFrame`, units, flags, bringing your own data, the synthetic faults;
+  - 02 Cleaning one stream: each cleaner scored against the injected faults, Hampel tuning, gap filling, why
+    step order matters;
+  - 03 Pipelines and specs: JSON specs, `spec_hash`, provenance, validation errors, fitting `tukey` on
+    training data, save/load and payloads, file inputs and outputs;
+  - 04 Several streams: named inputs, `align`, finding and shifting out a delay, `mask` before cleaning,
+    multi-stream `expression` rules, `combine`, `resample` and `window`.
+
+### M2: Calibrate and impute (0.2.0)
+
+- **Scope:**
+  - The condition language: pandas `eval` syntax plus `held(...)`, `is_raw(...)` and `flagged(...)`.
+  - `calibrate` with `fit_when`/`apply_when`, `prefer_reference`, and `refit` static or rolling. Backends:
+    sklearn, statsmodels and `curve_fit`.
+  - Imputers: `kalman` (statsmodels), `regression` (lags, Fourier terms, other streams), `knn`, `iterative` and
+    `tiered`.
+  - `filter` (savgol, butterworth, median) and `detotalize`.
+  - `eval`: a built-in masking benchmark (random and block gaps), with pygrinder optional under `[eval]`.
+- **Acceptance:**
+  - On a synthetic A/B/C/D fixture with known true A and intermittent B, `A_clean` RMSE is under a set threshold.
+  - With `refit="rolling"`, the calibration tracks an injected drift that `static` misses.
+  - The imputer benchmark report runs on synthetic data and on the flex-pse biogas data.
+  - An `interpolate` pipeline reproduces flex-pse's `imputed_bio_gas_generation.csv`.
+- **Docs:**
+  - getting_started/ten_minutes, built around the A/B/C/D example;
+  - explanation pages: conditions, calibration, imputation_tiers;
+  - how-to guides: calibrate_against_a_reference, impute_gaps, evaluate_imputers.
+- **Tutorials:**
+  - 05 Calibrating A against an intermittent reference B, only when C and D are 0: the full A/B/C/D problem,
+    picking up from tutorial 04;
+  - 06 Comparing imputers by gap length, on synthetic and biogas data.
+
+### M3: flex-pse bridge (0.3.0)
+
+- **Scope:**
+  - `integrations.flexpse`: `to_grid` (duck-typed `TimeBlock`, `DatetimeIndex` or `time` dict, timezone
+    handling), `to_parameterize`, `to_elements` (`fix`/`dispatch` dicts) and `patch_spec`.
+  - CI job pinned to the latest flex-pse release by git tag (`flex-pse[parameterize] @ git+...@v0.3.0` today;
+    see D3), plus a scheduled job against flex-pse `main`.
+- **Acceptance:**
+  - A component test runs synthetic raw data → clean → `to_grid` → `flexparameterize.apply_to_model` (multilinear) →
+    `flexops.apply_spec(model, to_elements(...))`, then solves with HiGHS.
+  - An off-grid or gappy input raises `FlexDataError`-style errors that name the gap.
+- **Docs:**
+  - explanation/flexpse_integration;
+  - how-to guides: feed_flexparameterize, apply_to_a_flexpse_model;
+  - intersphinx links into the flex-pse docs.
+- **Tutorials:** 07 From raw data to a flex-pse model: clean, `to_grid`, a `flexparameterize` fit and
+  `apply_spec`, solved with HiGHS.
+
+### M4: Forecasting (0.4.0)
+
+- **Scope:**
+  - The `forecast` step with past and future exogenous inputs, `issue_time`, quantiles and the `FORECAST` flag.
+  - Backends: statsmodels (core), skforecast (`[ml]`) and statsforecast/mlforecast (`[nixtla]`).
+  - `backtest` with blocked, time-ordered folds; `api.backtest`.
+  - Seasonal-naive and persistence baselines (core).
+- **Acceptance:**
+  - On synthetic data with known seasonality, backtest metrics beat seasonal-naive for at least one backend. They
+    are also reported on the biogas data.
+  - A forecast becomes `dispatch` elements on a flex-pse model's grid.
+  - Forecasts are deterministic with fixed seeds.
+- **Docs:** explanation/forecasting_and_backtesting and how_to/forecast_and_backtest.
+- **Tutorials:** 08 Forecasting and backtesting against a seasonal-naive baseline, and feeding the forecast to a
+  model as `dispatch`.
+
+### M5: Advanced backends (0.5.0)
+
+- **Scope:**
+  - `[pypots]`: a windowing adapter (DataFrame ↔ `{"X": [n, T, F]}` with the index restored) and SAITS, BRITS,
+    CSDI and TimesNet for imputation and forecasting.
+  - `[foundation]`: Chronos-2 by default, with a TimesFM-3 licence guard.
+  - `[deep]`: neuralforecast.
+  - `[anomaly]`: pyod `detector`, ruptures `changepoint`, stumpy.
+  - `[darts]` and `[sktime]` adapters.
+  - `[units]`: pint conversion at the boundary.
+- **Acceptance:**
+  - Each adapter has a test that is skipped cleanly when its extra is missing, and a CI matrix job installs
+    `[all]`.
+  - The PyPOTS windowing round trip preserves the index.
+  - The benchmark compares SAITS with the `tiered` imputer on synthetic and biogas data.
+- **Docs:** how_to/write_a_backend and the generated backend table, with the extra for every backend.
+- **Tutorials:** 09 Deep imputation and forecasting with PyPOTS and Chronos, compared with the core methods. If
+  training is too slow for CI, the tutorial loads committed, precomputed results, and a test checks that they
+  still reproduce.
+
+### M6: Stable release (1.0.0)
+
+- **Scope:**
+  - Freeze `schema_version` at 1.0.0, with migrations from every 0.x schema.
+  - Complete the orchestrator contract suite (§4.3), plus an optional test against flex-orchestrator's memory
+    backend.
+  - Write a deprecation policy.
+  - Finish the docs and examples, and make `publish.yml` publish to PyPI through trusted publishing.
+- **Acceptance:**
+  - Every 0.x example spec loads and migrates.
+  - The contract suite is green.
+  - `pip install flex-signal` from PyPI works.
+  - flex-orchestrator maintainers sign off that the API is enough for their wrapper.
+- **Docs:** explanation/orchestrator_contract, a migration guide, and a complete reference.
+- **Tutorials:** 10 A cleaning spec as a flex-orchestrator study: the run/fit contract, payloads, and migrating
+  an old spec. Revisit browser-run tutorials (§7), now that flex-signal is on PyPI.
+
+### M7: Acquirium (1.1.0)
+
+- **Scope:** re-check §4.2 against acquirium `main`, then build:
+  - `AcquiriumSource` (polars ↔ SignalFrame);
+  - `AcquiriumSink` (`register_streams`, `insert_timeseries_arrow`, `__flags` companion streams);
+  - `PipelineApp`, a stable class configured by parameters;
+  - forecast issuances stored as experiment runs.
+- **Acceptance:**
+  - A `PipelineApp` deployed on a local Acquirium server, fed synthetic data by a test driver written in this
+    repo, produces cleaned streams and flag streams.
+  - A forecast run is stored and read back.
+  - Redeploying with new parameters doesn't trigger a digest mismatch.
+- **Docs:** explanation/acquirium_integration and how_to/deploy_a_pipeline_app.
+- **Tutorials:** 11 A live Acquirium soft sensor: a `PipelineApp` that cleans a stream and stores a forecast,
+  run on the in-repo test driver.
+
+### Test data
+
+flex-signal's tests, examples, benchmarks and docs use exactly two sources of data. Nothing else
 from other repositories, and no plant or customer data, is allowed.
 
 1. **flex-pse's public test dataset.** This is `src/flexparameterize/tests/test_time_series_data/` in flex-pse:
@@ -537,11 +775,10 @@ from other repositories, and no plant or customer data, is allowed.
    from, and their licence. Before vendoring, confirm the upstream repo's licence permits redistribution.
 2. **`flexsignal.testing.synthetic`**, a seeded generator built in M1, which produces plant-like multivariate
    series:
-
-- daily and weekly seasonality and noise;
-- correlated streams and on/off regimes (the C and D streams of §3.5);
-- an intermittent trusted reference;
-- injected faults (spikes, stuck sensors, drift, steps, gaps of controlled length).
+   - daily and weekly seasonality and noise;
+   - correlated streams and on/off regimes (the C and D streams of §3.5);
+   - an intermittent trusted reference;
+   - injected faults (spikes, stuck sensors, drift, steps, gaps of controlled length).
 
 Each series comes with its ground truth. Because the truth is known, acceptance tests can assert accuracy (for
 example "`A_clean` is within tolerance of the true A"), which real data cannot support. Generated fixtures are
@@ -564,6 +801,13 @@ can run any pipeline on their own data, but none of it is shipped here.
 | D6 | **No orchestrator plugin in flex-signal.** flex-orchestrator will write a direct wrapper once flex-signal is stable. flex-signal guarantees an orchestrator-ready API (§4.3), verified by contract tests |
 | D7 | **Acquirium last.** Build against acquirium `main` in phase 7, after everything else works, which gives its API time to settle. Nothing before phase 7 depends on Acquirium |
 | D8 | **Documentation mirrors flex-pse:** Sphinx with furo and MyST, Diátaxis layout, strict `-W` builds, reference tables generated from the code, tested examples, GitHub Pages. Docs ship with every phase (§7) |
+| D9 | **Steps are frozen pydantic models; fitted state is a separate JSON dict** (`fit(sf) -> dict`, `transform(sf, state)`). This guarantees Python/JSON parity and keeps specs unchanged by fitting (M1, §3.3) |
+| D10 | **Provenance is computed by the pipeline** from each step's input and output, not hand-written by steps (M1, §3.2) |
+| D11 | **Tests may use the whole package.** import-linter exempts imports *from* `*.tests.*` modules, and library code stays fully layered. `flexsignal.testing` (the synthetic generator) sits in the `eval \| api \| testing` layer (M1) |
+| D12 | **Tutorials are marimo notebooks in this repo, built with each milestone** (2026-11-10). marimo matches flex-pse-examples, keeps notebooks as plain Python that can be linted and tested, and can export static or browser-run pages. Each milestone's tutorials are part of its definition of done (§7, §8) |
+| D13 | **Rows added by joining inputs are flagged `NO_SAMPLE`** (2026-11-10), together with `MISSING`, and `align`, `resample` and `interpolate` skip them. Found while building tutorial 04: without the flag, an off-grid source aligned to the join's padding and came out all NaN (§3.2) |
+| D14 | **Naive timestamps are taken as the machine's local time, with a warning** (2026-11-10), instead of being refused. flex-pse work usually runs on a "local system" at, or set up for, one plant, and rarely mixes time zones, so refusing was friction without benefit. The zone comes from `tzlocal` (an IANA name, so daylight saving is handled), and `TZ` overrides it. `NaiveTimestampWarning` says which zone was assumed; `timezone=` silences it. Timestamps written in a spec still mean UTC, so a spec means the same on every machine. Daylight-saving gaps and repeats in naive data are still errors |
+| D15 | **Conditions are checked against an allowlist before they are evaluated** (2026-11-10). `pandas.eval` let a condition reach Python internals through attribute access (`flow.__class__.__init__.__globals__`) and call methods (`flow.abs()`), so a shared spec could run code. `check_condition` parses each condition with `ast` and accepts only stream names, numbers, arithmetic, comparisons, boolean operators and the functions in `CONDITION_FUNCTIONS`, with exponents of at most 100. It runs when a spec is loaded and again before evaluation. File paths in specs remain a trust issue (docs: spec_schema) |
 
 ### Open
 

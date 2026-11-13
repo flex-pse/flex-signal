@@ -1,0 +1,1172 @@
+{
+  "$defs": {
+    "Align": {
+      "additionalProperties": false,
+      "description": "Put every stream on one regular time grid.\n\nEach grid point takes the stream's sample at exactly that time if there is\none, even if that sample is missing. (Rows flagged ``NO_SAMPLE``, which a join\nof several inputs adds, aren't samples.) Otherwise it takes a value from nearby\nvalid samples, chosen by ``method``, and is flagged ``RESAMPLED``. With no\nvalid sample within ``tolerance``, the point is NaN and flagged ``MISSING``.\nThe grid is anchored at multiples of ``freq`` from the Unix epoch, so the\nsame data always gives the same grid.",
+      "properties": {
+        "freq": {
+          "description": "Grid spacing, e.g. 1min.",
+          "title": "Freq",
+          "type": "string"
+        },
+        "how": {
+          "default": "outer",
+          "description": "outer: the grid spans every stream's data; inner: only the time all streams cover.",
+          "enum": [
+            "outer",
+            "inner"
+          ],
+          "title": "How",
+          "type": "string"
+        },
+        "kind": {
+          "const": "align",
+          "default": "align",
+          "title": "Kind",
+          "type": "string"
+        },
+        "method": {
+          "default": "nearest",
+          "description": "nearest: the closest valid sample; previous: the last valid sample at or before the grid time; linear: time-weighted between the valid samples either side.",
+          "enum": [
+            "nearest",
+            "previous",
+            "linear"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "tolerance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "nearest/previous: how far away a sample may be (default: freq). linear: the largest allowed gap between the two samples either side (default: 2 x freq).",
+          "title": "Tolerance"
+        }
+      },
+      "required": [
+        "freq"
+      ],
+      "title": "Align",
+      "type": "object"
+    },
+    "Combine": {
+      "additionalProperties": false,
+      "description": "Build a new stream from several, e.g. two redundant meters.\n\nThe result is flagged ``DERIVED``. For ``coalesce``, each sample takes the\nfirst stream (in order) that has a value, along with that stream's flags. For\nthe other methods, the result's flags are the OR of every input's flags.",
+      "properties": {
+        "how": {
+          "default": "coalesce",
+          "description": "How to combine the values at each time.",
+          "enum": [
+            "coalesce",
+            "mean",
+            "sum",
+            "min",
+            "max"
+          ],
+          "title": "How",
+          "type": "string"
+        },
+        "kind": {
+          "const": "combine",
+          "default": "combine",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "output": {
+          "description": "Name of the new stream.",
+          "title": "Output",
+          "type": "string"
+        },
+        "streams": {
+          "description": "The streams to combine.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Streams",
+          "type": "array"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Units of the result. Required if the inputs' units differ; defaults to their common units.",
+          "title": "Units"
+        }
+      },
+      "required": [
+        "output",
+        "streams"
+      ],
+      "title": "Combine",
+      "type": "object"
+    },
+    "CsvInput": {
+      "additionalProperties": false,
+      "description": "A CSV file, read when the caller doesn't bind data to this slot.",
+      "properties": {
+        "kind": {
+          "const": "csv",
+          "default": "csv",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "description": "Slot name; data bound to this name replaces the file.",
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the file, relative to the spec file.",
+          "title": "Path",
+          "type": "string"
+        },
+        "time_column": {
+          "default": "timestamp",
+          "description": "Column holding the timestamps.",
+          "title": "Time Column",
+          "type": "string"
+        },
+        "timezone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time zone of timestamps written without an offset, e.g. UTC or America/Los_Angeles. If omitted, they are taken as the local time of the machine running the spec, with a warning; set it so the spec gives the same result everywhere.",
+          "title": "Timezone"
+        },
+        "units": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Units per stream, e.g. {flow: m^3/hr}.",
+          "title": "Units",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "title": "CsvInput",
+      "type": "object"
+    },
+    "CsvOutput": {
+      "additionalProperties": false,
+      "description": "Write the result's values (and optionally flags) to a CSV file.",
+      "properties": {
+        "include_flags": {
+          "default": false,
+          "description": "Also write one <stream>__flags column per stream.",
+          "title": "Include Flags",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "csv",
+          "default": "csv",
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "description": "Output path, relative to the spec file.",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "CsvOutput",
+      "type": "object"
+    },
+    "Expression": {
+      "additionalProperties": false,
+      "description": "Reject values wherever a user-written condition holds.\n\nFor example ``invalid_when=\"pressure < 0 or pump_on == 0\"``. Flags the\nrejected values with ``flag``, ``MANUAL`` by default.",
+      "properties": {
+        "flag": {
+          "default": "MANUAL",
+          "description": "Which flag to set on rejected values.",
+          "enum": [
+            "MANUAL",
+            "OUT_OF_RANGE",
+            "RATE_OF_CHANGE",
+            "OUTLIER",
+            "STUCK"
+          ],
+          "title": "Flag",
+          "type": "string"
+        },
+        "invalid_when": {
+          "description": "Condition over stream names, e.g. 'pressure < 0'.",
+          "title": "Invalid When",
+          "type": "string"
+        },
+        "kind": {
+          "const": "expression",
+          "default": "expression",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "invalid_when"
+      ],
+      "title": "Expression",
+      "type": "object"
+    },
+    "FrameInput": {
+      "additionalProperties": false,
+      "description": "A named input slot that the caller fills with data at run time.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What data belongs in this slot.",
+          "title": "Description"
+        },
+        "kind": {
+          "const": "frame",
+          "default": "frame",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "description": "Slot name; the caller binds data to it, e.g. historian.",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "FrameInput",
+      "type": "object"
+    },
+    "Hampel": {
+      "additionalProperties": false,
+      "description": "Reject spikes with a Hampel filter: a rolling median plus a robust spread.\n\nEach value is compared with the median of a centred time window. It is\nflagged ``OUTLIER`` if it lies more than ``n_sigma`` robust standard deviations\nfrom that median. The robust standard deviation is\n1.4826 \u00d7 the window's median absolute deviation; 1.4826 is the fixed factor\nthat makes this match the standard deviation for normal data, so ``n_sigma``\nis the only threshold to tune. See Pearson, R. K. (2002),\n\"Outliers in process modeling and identification\", IEEE Trans. Control\nSystems Technology 10(1), 55-63, doi:10.1109/87.974338.\n\nThe window should be several times wider than the spikes being removed, and\nnarrow enough that the signal's own trend changes little across it.\n\nA spread estimated from a short window can come out much smaller than the\nreal noise, and then ordinary noise gets flagged. This happens most where\nthe signal is flat. Set ``min_scale`` to the sensor's noise standard\ndeviation, or its resolution, to put a floor under the spread.",
+      "properties": {
+        "kind": {
+          "const": "hampel",
+          "default": "hampel",
+          "title": "Kind",
+          "type": "string"
+        },
+        "min_periods": {
+          "default": 3,
+          "description": "Fewest valid samples a window needs before it can flag.",
+          "minimum": 3,
+          "title": "Min Periods",
+          "type": "integer"
+        },
+        "min_scale": {
+          "default": 0.0,
+          "description": "Floor on the robust standard deviation, in the stream's units; typically the sensor's noise level.",
+          "minimum": 0,
+          "title": "Min Scale",
+          "type": "number"
+        },
+        "n_sigma": {
+          "default": 3.0,
+          "description": "How many robust standard deviations count as an outlier.",
+          "exclusiveMinimum": 0,
+          "title": "N Sigma",
+          "type": "number"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "window": {
+          "description": "Width of the centred window, e.g. 1h.",
+          "title": "Window",
+          "type": "string"
+        }
+      },
+      "required": [
+        "streams",
+        "window"
+      ],
+      "title": "Hampel",
+      "type": "object"
+    },
+    "Interpolate": {
+      "additionalProperties": false,
+      "description": "Fill short interior gaps by interpolating between the valid values either side.\n\nA gap is a run of missing values. Its length is the time between the valid\nsample before it and the valid sample after it. Only gaps no longer than\n``max_gap`` are filled: on 5-minute data, ``max_gap=\"15min\"`` fills up to two\nmissing samples in a row. Gaps at the start or end of the data, and values\nflagged ``EXCLUDED`` or ``NO_SAMPLE``, are never filled. Filled values keep\nthe flags that explain why they were missing, and gain ``IMPUTED_SHORT``.\n\nMethods use numpy and scipy:\n\n- ``linear``: :func:`numpy.interp`;\n- ``nearest`` and ``previous``: :class:`scipy.interpolate.interp1d`;\n- ``pchip``: :class:`scipy.interpolate.PchipInterpolator`, shape-preserving\n  with no overshoot;\n- ``akima``: :class:`scipy.interpolate.Akima1DInterpolator`.",
+      "properties": {
+        "kind": {
+          "const": "interpolate",
+          "default": "interpolate",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_gap": {
+          "description": "Longest gap to fill, measured between the valid samples either side, e.g. 15min.",
+          "title": "Max Gap",
+          "type": "string"
+        },
+        "method": {
+          "default": "linear",
+          "description": "Interpolation method.",
+          "enum": [
+            "linear",
+            "nearest",
+            "previous",
+            "pchip",
+            "akima"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "max_gap"
+      ],
+      "title": "Interpolate",
+      "type": "object"
+    },
+    "Mask": {
+      "additionalProperties": false,
+      "description": "Keep data only where a condition holds; exclude the rest.\n\nUse this to select operating periods, e.g. ``keep_when=\"pump_on == 1\"``.\nExcluded values become NaN and are flagged ``EXCLUDED``, which marks them as\ndeliberately left out, not as bad data. Imputers never fill them. With\n``drop_rows``, the rows are removed instead.",
+      "properties": {
+        "drop_rows": {
+          "default": false,
+          "description": "Remove rows where the condition fails, instead of excluding values.",
+          "title": "Drop Rows",
+          "type": "boolean"
+        },
+        "keep_when": {
+          "description": "Condition over stream names, e.g. 'pump_on == 1 and flow > 0'.",
+          "title": "Keep When",
+          "type": "string"
+        },
+        "kind": {
+          "const": "mask",
+          "default": "mask",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Streams to exclude values from (default: all).",
+          "title": "Streams"
+        }
+      },
+      "required": [
+        "keep_when"
+      ],
+      "title": "Mask",
+      "type": "object"
+    },
+    "ParquetInput": {
+      "additionalProperties": false,
+      "description": "A Parquet file, read when the caller doesn't bind data to this slot.",
+      "properties": {
+        "kind": {
+          "const": "parquet",
+          "default": "parquet",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "description": "Slot name; data bound to this name replaces the file.",
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the file, relative to the spec file.",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "title": "ParquetInput",
+      "type": "object"
+    },
+    "ParquetOutput": {
+      "additionalProperties": false,
+      "description": "Write the result to a Parquet file, keeping flags, units and provenance.",
+      "properties": {
+        "kind": {
+          "const": "parquet",
+          "default": "parquet",
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "description": "Output path, relative to the spec file.",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ParquetOutput",
+      "type": "object"
+    },
+    "Quantity": {
+      "additionalProperties": false,
+      "description": "A number with units, e.g. ``{\"value\": 5, \"units\": \"m^3/hr\"}``.",
+      "properties": {
+        "units": {
+          "description": "Units as a pyomo/pint-parseable string, e.g. m^3/hr.",
+          "title": "Units",
+          "type": "string"
+        },
+        "value": {
+          "description": "The magnitude.",
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "units"
+      ],
+      "title": "Quantity",
+      "type": "object"
+    },
+    "Range": {
+      "additionalProperties": false,
+      "description": "Reject values outside fixed limits, e.g. a negative flow or an error code.\n\nFlags rejected values ``OUT_OF_RANGE``. The limits themselves are allowed.",
+      "properties": {
+        "kind": {
+          "const": "range",
+          "default": "range",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Largest allowed value, as a number or {value, units}.",
+          "title": "Max"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Smallest allowed value, as a number or {value, units}.",
+          "title": "Min"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "Range",
+      "type": "object"
+    },
+    "RateOfChange": {
+      "additionalProperties": false,
+      "description": "Reject values that change faster than the process physically can.\n\nEach value is compared with the last *accepted* value. If\n``|change| / elapsed time`` exceeds ``max_rate`` per ``per``, the value is\nflagged ``RATE_OF_CHANGE``. A spike is caught without flagging the point\nafter it, because that point is compared with the last good value before the\nspike. A genuine step change is accepted once enough time has passed for the\nallowed rate to cover it.",
+      "properties": {
+        "kind": {
+          "const": "rate_of_change",
+          "default": "rate_of_change",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_rate": {
+          "description": "Largest allowed change per `per`.",
+          "exclusiveMinimum": 0,
+          "title": "Max Rate",
+          "type": "number"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "per": {
+          "default": "1h",
+          "description": "Time unit of max_rate, e.g. 1h or 1min.",
+          "title": "Per",
+          "type": "string"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "max_rate"
+      ],
+      "title": "RateOfChange",
+      "type": "object"
+    },
+    "Rename": {
+      "additionalProperties": false,
+      "description": "Rename streams. Metadata and flags move with them.",
+      "properties": {
+        "kind": {
+          "const": "rename",
+          "default": "rename",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mapping": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Old name -> new name, e.g. {FT_101: flow}.",
+          "minProperties": 1,
+          "title": "Mapping",
+          "type": "object"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        }
+      },
+      "required": [
+        "mapping"
+      ],
+      "title": "Rename",
+      "type": "object"
+    },
+    "Resample": {
+      "additionalProperties": false,
+      "description": "Aggregate every stream into fixed time bins.\n\nBins are left-closed and labelled by their start, and anchored at multiples of\n``freq`` from the Unix epoch. A bin's flags are the OR of its samples' flags,\nplus ``RESAMPLED`` when it has a value. A bin with no samples at all is\nflagged ``MISSING``.",
+      "properties": {
+        "agg": {
+          "default": "mean",
+          "description": "How to aggregate the valid samples in a bin.",
+          "enum": [
+            "mean",
+            "median",
+            "min",
+            "max",
+            "sum",
+            "first",
+            "last"
+          ],
+          "title": "Agg",
+          "type": "string"
+        },
+        "freq": {
+          "description": "Bin width, e.g. 15min or 1h.",
+          "title": "Freq",
+          "type": "string"
+        },
+        "kind": {
+          "const": "resample",
+          "default": "resample",
+          "title": "Kind",
+          "type": "string"
+        },
+        "min_count": {
+          "default": 1,
+          "description": "Fewest valid samples a bin needs to get a value.",
+          "minimum": 1,
+          "title": "Min Count",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        }
+      },
+      "required": [
+        "freq"
+      ],
+      "title": "Resample",
+      "type": "object"
+    },
+    "Shift": {
+      "additionalProperties": false,
+      "description": "Shift streams in time, e.g. to undo a known transport delay.\n\nA positive ``by`` moves values later. It needs a regular index, and ``by``\nmust be a whole number of steps. Grid points left without a value are\nflagged ``MISSING``.",
+      "properties": {
+        "by": {
+          "description": "How far to move the values, e.g. 5min or -5min.",
+          "title": "By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "shift",
+          "default": "shift",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "by"
+      ],
+      "title": "Shift",
+      "type": "object"
+    },
+    "Stuck": {
+      "additionalProperties": false,
+      "description": "Reject flat-lined runs, the signature of a frozen sensor or a held last value.\n\nA run is consecutive valid samples whose values differ by at most\n``tolerance``. Missing samples in between don't break a run. Every sample of\na run lasting ``min_duration`` or longer is flagged ``STUCK``. Runs at a value\nlisted in ``exclude_values`` are left alone; this is useful for a legitimate\nconstant such as 0 when a pump is off.",
+      "properties": {
+        "exclude_values": {
+          "default": [],
+          "description": "Values at which a flat run is legitimate, e.g. [0].",
+          "items": {
+            "type": "number"
+          },
+          "title": "Exclude Values",
+          "type": "array"
+        },
+        "kind": {
+          "const": "stuck",
+          "default": "stuck",
+          "title": "Kind",
+          "type": "string"
+        },
+        "min_duration": {
+          "description": "Shortest flat run that counts as stuck, e.g. 1h.",
+          "title": "Min Duration",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "tolerance": {
+          "default": 0.0,
+          "description": "Largest change between samples that still counts as flat.",
+          "minimum": 0,
+          "title": "Tolerance",
+          "type": "number"
+        }
+      },
+      "required": [
+        "streams",
+        "min_duration"
+      ],
+      "title": "Stuck",
+      "type": "object"
+    },
+    "Tukey": {
+      "additionalProperties": false,
+      "description": "Reject values beyond Tukey's fences, learned from the training data.\n\n``fit`` records each stream's quartiles Q1 and Q3. Values below\n``Q1 - k\u00b7IQR`` or above ``Q3 + k\u00b7IQR`` are flagged ``OUTLIER``, where\nIQR = Q3 - Q1. Use k = 1.5 for \"outliers\" and k = 3 for \"far out\" values\n(Tukey, J. W. (1977), *Exploratory Data Analysis*, Addison-Wesley).\n\nThis suits streams whose normal range doesn't drift. For a signal with a\nstrong trend or regimes, prefer ``hampel``.",
+      "properties": {
+        "k": {
+          "default": 1.5,
+          "description": "Fence width in multiples of the IQR.",
+          "exclusiveMinimum": 0,
+          "title": "K",
+          "type": "number"
+        },
+        "kind": {
+          "const": "tukey",
+          "default": "tukey",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "Tukey",
+      "type": "object"
+    },
+    "Window": {
+      "additionalProperties": false,
+      "description": "Keep only the rows inside a time window.",
+      "properties": {
+        "end": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "End of the window (exclusive). Naive means UTC.",
+          "title": "End"
+        },
+        "kind": {
+          "const": "window",
+          "default": "window",
+          "title": "Kind",
+          "type": "string"
+        },
+        "last": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Keep only this much time before the last timestamp, e.g. 7D. Can't be combined with start or end.",
+          "title": "Last"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "First time kept (inclusive). Naive means UTC.",
+          "title": "Start"
+        }
+      },
+      "title": "Window",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A declarative, versioned description of a pipeline.\n\n``steps`` accepts step objects or plain dicts with a ``kind``. Dicts are\nresolved through the step registry. :func:`flexsignal.spec.load_spec` is the\npreferred way to read a spec from JSON, because its errors point at the exact\nfield.",
+  "properties": {
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "What the pipeline is for.",
+      "title": "Description"
+    },
+    "inputs": {
+      "default": [],
+      "description": "Named input slots. With none, the pipeline takes a single frame of data.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "csv": "#/$defs/CsvInput",
+            "frame": "#/$defs/FrameInput",
+            "parquet": "#/$defs/ParquetInput"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/FrameInput"
+          },
+          {
+            "$ref": "#/$defs/ParquetInput"
+          },
+          {
+            "$ref": "#/$defs/CsvInput"
+          }
+        ]
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "description": "Free-form metadata, kept with the spec.",
+      "title": "Metadata",
+      "type": "object"
+    },
+    "name": {
+      "description": "Name of the pipeline.",
+      "title": "Name",
+      "type": "string"
+    },
+    "outputs": {
+      "default": [],
+      "description": "Where flexsignal.api.run writes the result.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "csv": "#/$defs/CsvOutput",
+            "parquet": "#/$defs/ParquetOutput"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ParquetOutput"
+          },
+          {
+            "$ref": "#/$defs/CsvOutput"
+          }
+        ]
+      },
+      "title": "Outputs",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "0.1.0",
+      "description": "Version of the SignalSpec schema, X.Y.Z.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "steps": {
+      "default": [],
+      "description": "The steps, applied in order.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "align": "#/$defs/Align",
+            "combine": "#/$defs/Combine",
+            "expression": "#/$defs/Expression",
+            "hampel": "#/$defs/Hampel",
+            "interpolate": "#/$defs/Interpolate",
+            "mask": "#/$defs/Mask",
+            "range": "#/$defs/Range",
+            "rate_of_change": "#/$defs/RateOfChange",
+            "rename": "#/$defs/Rename",
+            "resample": "#/$defs/Resample",
+            "shift": "#/$defs/Shift",
+            "stuck": "#/$defs/Stuck",
+            "tukey": "#/$defs/Tukey",
+            "window": "#/$defs/Window"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/Align"
+          },
+          {
+            "$ref": "#/$defs/Combine"
+          },
+          {
+            "$ref": "#/$defs/Expression"
+          },
+          {
+            "$ref": "#/$defs/Hampel"
+          },
+          {
+            "$ref": "#/$defs/Interpolate"
+          },
+          {
+            "$ref": "#/$defs/Mask"
+          },
+          {
+            "$ref": "#/$defs/Range"
+          },
+          {
+            "$ref": "#/$defs/RateOfChange"
+          },
+          {
+            "$ref": "#/$defs/Rename"
+          },
+          {
+            "$ref": "#/$defs/Resample"
+          },
+          {
+            "$ref": "#/$defs/Shift"
+          },
+          {
+            "$ref": "#/$defs/Stuck"
+          },
+          {
+            "$ref": "#/$defs/Tukey"
+          },
+          {
+            "$ref": "#/$defs/Window"
+          }
+        ]
+      },
+      "title": "Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "SignalSpec",
+  "type": "object"
+}

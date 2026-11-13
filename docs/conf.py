@@ -22,10 +22,34 @@ extensions = [
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build"]
+exclude_patterns = ["_build", "_tutorials"]
 autosummary_generate = True
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
+
+# Docstrings name flex-signal's errors by their short names (``Raises:
+# SignalDataError: ...``). Map them to where they are documented, so the
+# cross-references resolve instead of being ignored.
+napoleon_preprocess_types = True
+napoleon_type_aliases = {
+    name: f"~flexsignal.core.{name}"
+    for name in (
+        "SignalError",
+        "SignalConfigError",
+        "SignalDataError",
+        "SignalBackendError",
+        "SignalWarning",
+        "NaiveTimestampWarning",
+    )
+}
+
+# Steps and spec models are pydantic models. Their generated constructor
+# signature lists validator internals (annotated_types metadata, private
+# check functions), which isn't useful to a reader and has no cross-reference
+# targets. Keep class signatures off the class line; each step page shows a
+# generated field table instead (flexsignal-spec-table).
+autodoc_class_signature = "separated"
+autodoc_member_order = "bysource"
 
 # Optional backends are mocked so the docs build needs only the [docs] extra.
 # Add a module here when the backend that imports it lands (PLAN.md §7).
@@ -52,6 +76,12 @@ myst_heading_anchors = 3
 html_theme = "furo"
 html_title = "flex-signal"
 html_static_path = ["_static"]
+# The marimo tutorials are exported to static HTML before the Sphinx build (see
+# .github/workflows/docs.yml) into docs/_tutorials/tutorials/, and copied into
+# the site next to tutorials/index.html. A local build without the export
+# still works; only the links to the tutorial pages go nowhere.
+if (Path(__file__).parent / "_tutorials").is_dir():
+    html_extra_path = ["_tutorials"]
 
 
 def _skip_deprecated_or_todo(app, what, name, obj, skip, options):

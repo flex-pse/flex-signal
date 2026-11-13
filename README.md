@@ -14,15 +14,42 @@ statsmodels, PyPOTS and other established libraries. flex-signal adds:
 - per-sample quality flags and provenance;
 - adapters to the rest of the ecosystem.
 
-> **Status: pre-alpha (M0, scaffold).** There is no user-facing functionality
-> yet. See [PLAN.md](PLAN.md) for the architecture and milestones.
+> **Status: pre-alpha (M1).** Cleaning pipelines work: select, clean and
+> interpolate steps, JSON specs, fitted-pipeline persistence and synthetic test
+> data. The API may still change before 1.0. See [PLAN.md](PLAN.md) for the
+> architecture and milestones.
+
+New here? The [tutorials](tutorials/) walk through the API from a first look
+at the data to multi-stream cleaning rules (`pip install -e ".[tutorials]"`,
+then `marimo edit tutorials/01_first_look.py`). They're also on the
+[docs site](https://flex-pse.github.io/flex-signal/tutorials/index.html).
+
+## Quick look
+
+```python
+import flexsignal as fs
+from flexsignal.testing import synthetic
+
+raw = synthetic.plant(seed=0).with_spikes("flow", count=5).signal()
+pipe = fs.Pipeline(
+    [
+        fs.clean.Range("flow", min=0, max=500),
+        fs.clean.Hampel("flow", window="1h", n_sigma=6, min_scale=1.0),
+        fs.impute.Interpolate("flow", max_gap="15min"),
+    ],
+    name="flow_cleanup",
+)
+result = fs.run(pipe.spec, raw)
+result.signal.flag_counts()["flow"]   # what was removed, and why
+fs.dump_spec(pipe.spec)               # the same pipeline as JSON
+```
 
 ## Installation
 
 ```bash
 git clone https://github.com/flex-pse/flex-signal.git
 cd flex-signal
-conda env create -f environment.yml   # or: pip install -e ".[dev,docs]"
+conda env create -f environment.yml   # or: pip install -e ".[dev,docs,tutorials]"
 conda activate flex-signal
 ```
 

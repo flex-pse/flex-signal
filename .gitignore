@@ -73,6 +73,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/_tutorials/
 # autosummary-generated stub pages (regenerated at build time)
 docs/reference/**/generated/
 

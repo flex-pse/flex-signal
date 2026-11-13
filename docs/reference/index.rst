@@ -1,40 +1,20 @@
 API reference
 =============
 
-The package layout. Each subpackage's purpose and the milestone it is built in
-are given below. Lower layers never import higher ones, and only the
-integration subpackages touch flex-pse or Acquirium. ``lint-imports`` enforces
-both rules.
+The public API. Everything a typical user needs is importable from the top-level
+package: ``import flexsignal as fs``, then ``fs.Pipeline``, ``fs.run``,
+``fs.clean.Hampel`` and so on.
 
-.. automodule:: flexsignal
+Lower layers never import higher ones, and only the integration subpackages
+touch flex-pse or Acquirium. ``lint-imports`` enforces both rules.
 
-Core and spec
--------------
+.. toctree::
+   :maxdepth: 1
 
-.. automodule:: flexsignal.core
-
-.. automodule:: flexsignal.spec
-
-.. automodule:: flexsignal.io
-
-Steps and pipelines
--------------------
-
-.. automodule:: flexsignal.backends
-
-.. automodule:: flexsignal.steps
-
-.. automodule:: flexsignal.pipeline
-
-.. automodule:: flexsignal.eval
-
-.. automodule:: flexsignal.api
-
-Integrations
-------------
-
-.. automodule:: flexsignal.integrations
-
-.. automodule:: flexsignal.integrations.flexpse
-
-.. automodule:: flexsignal.integrations.acquirium
+   pipeline
+   steps
+   spec
+   core
+   io_backends
+   testing
+   integrations

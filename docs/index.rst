@@ -10,15 +10,20 @@ fits, and flex-orchestrator studies.
 
 .. note::
 
-   flex-signal is pre-alpha. This release (M0) is the project scaffold, with
-   no user-facing functionality yet. The architecture and milestones are in
+   flex-signal is pre-alpha (M1). Cleaning pipelines work: select, clean and
+   interpolate steps, JSON specs, and fitted-pipeline persistence. The API may
+   still change before 1.0. The architecture and milestones are in
    `PLAN.md <https://github.com/flex-pse/flex-signal/blob/main/PLAN.md>`_.
+
+Start with the :doc:`tutorials/index`, or go straight to
+:doc:`how_to/clean_a_stream`, then :doc:`explanation/signal_frame_and_flags`.
 
 .. toctree::
    :maxdepth: 2
    :caption: Getting started
 
    getting_started/installation
+   tutorials/index
 
 .. toctree::
    :maxdepth: 2

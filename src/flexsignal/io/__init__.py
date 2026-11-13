@@ -1,4 +1,11 @@
-"""File input and output: Parquet (units and flags in Arrow metadata) and CSV.
+"""File input and output: Parquet (lossless, with flags and metadata) and CSV."""
 
-Lands in M1.
-"""
+from flexsignal.io.files import (
+    METADATA_KEY,
+    read_csv,
+    read_parquet,
+    write_csv,
+    write_parquet,
+)
+
+__all__ = ["METADATA_KEY", "read_csv", "read_parquet", "write_csv", "write_parquet"]
