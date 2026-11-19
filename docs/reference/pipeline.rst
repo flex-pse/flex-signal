@@ -4,7 +4,7 @@ Pipelines and entry points
 Running a spec
 --------------
 
-These are the entry points flex-orchestrator will wrap (see PLAN.md §4.3): a
+These are the entry points flex-orchestrator will wrap: a
 spec goes in and a JSON-able result comes out, with no file I/O when data is
 passed in.
 
@@ -21,7 +21,7 @@ Pipelines
 ---------
 
 .. autoclass:: Pipeline
-   :members: from_spec, fit, fit_transform
+   :members: add_step, from_spec, fit, fit_transform
 
 .. autoclass:: FittedPipeline
    :members: transform, report, to_payload, from_payload, save, load

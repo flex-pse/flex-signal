@@ -181,7 +181,14 @@ def load_spec(source: SpecLike, *, base_dir: str | Path | None = None) -> Signal
         try:
             step_cls = get_step_class(raw["kind"])
         except SignalConfigError as exc:
-            raise SignalConfigError(exc.message, field=f"steps.{i}.kind") from None
+            message = exc.message
+            requires = data.get("requires")
+            if isinstance(requires, list) and requires:
+                message = (
+                    f"{message} The spec says it needs {requires}: install them and "
+                    "load them with fs.load_plugins(...) or plugins=[...]."
+                )
+            raise SignalConfigError(message, field=f"steps.{i}.kind") from None
         try:
             steps.append(step_cls.model_validate(raw))
         except ValidationError as exc:
@@ -215,6 +222,8 @@ def dump_spec(spec: SignalSpec, path: str | Path | None = None) -> dict[str, Any
     out: dict[str, Any] = {"schema_version": spec.schema_version, "name": spec.name}
     if spec.description is not None:
         out["description"] = spec.description
+    if spec.requires:
+        out["requires"] = list(spec.requires)
     if spec.inputs:
         out["inputs"] = [_dump_model(i) for i in spec.inputs]
     out["steps"] = [_dump_model(s) for s in spec.steps]

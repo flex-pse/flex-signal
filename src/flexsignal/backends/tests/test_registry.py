@@ -28,3 +28,16 @@ def test_unknown_key_and_conflicting_registration():
         get_backend("numpy:no_such_function")
     with pytest.raises(SignalBackendError, match="already registered"):
         register_backend("numpy:interp", "numpy:polyfit")
+
+
+@pytest.mark.unit
+def test_builtin_keys_are_registered_in_one_module():
+    from flexsignal.backends import builtin
+    from flexsignal.backends.models import CURVE_FIT, LINEAR_MODELS
+
+    keys = {info.key for info in registered_backends()}
+    assert {*LINEAR_MODELS, CURVE_FIT, "scipy:PchipInterpolator"} <= keys
+    assert builtin.__name__ == "flexsignal.backends.builtin"
+    # A built-in key can't be silently redirected, even before any lookup.
+    with pytest.raises(SignalBackendError, match="already registered"):
+        register_backend("scipy:butter", "os:system")

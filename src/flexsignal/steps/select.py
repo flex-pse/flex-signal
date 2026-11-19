@@ -18,6 +18,7 @@ from flexsignal.core.exceptions import SignalConfigError, SignalDataError
 from flexsignal.core.flags import ALL_BITS, FLAG_DTYPE, Flag
 from flexsignal.core.frame import SignalFrame
 from flexsignal.core.registry import register_step
+from flexsignal.core.units import convert
 from flexsignal.spec.models import (
     Duration,
     SignedDuration,
@@ -28,7 +29,16 @@ from flexsignal.spec.models import (
 )
 from flexsignal.steps._base import StreamStep, check_streams, regular_step
 
-__all__ = ["Align", "Combine", "Mask", "Rename", "Resample", "Shift", "Window"]
+__all__ = [
+    "Align",
+    "Combine",
+    "ConvertUnits",
+    "Mask",
+    "Rename",
+    "Resample",
+    "Shift",
+    "Window",
+]
 
 
 def _grid(
@@ -322,7 +332,7 @@ class Mask(StepSpec):
 
     def transform(self, sf: SignalFrame, state: Mapping[str, Any]) -> SignalFrame:
         """Exclude values or drop rows (see the class docstring)."""
-        keep = evaluate_condition(sf.values, self.keep_when, field="keep_when")
+        keep = evaluate_condition(sf, self.keep_when, field="keep_when")
         if self.drop_rows:
             mask = keep.to_numpy()
             return sf.evolve(values=sf.values[mask], flags=sf.flags[mask])
@@ -363,6 +373,39 @@ class Rename(StepSpec):
             flags=sf.flags.set_axis(new_names, axis=1),
             meta=meta,
         )
+
+
+@register_step
+class ConvertUnits(StreamStep):
+    """Convert streams to other units, e.g. a meter's gpm to the model's m^3/hr.
+
+    Values are rescaled exactly (offset units such as degC and K too), the
+    stream's units are updated, and the flags are unchanged. Needs pint (the
+    ``[units]`` extra).
+    """
+
+    kind: Literal["convert_units"] = "convert_units"
+    to: str = Field(description="The units wanted, e.g. m^3/hr.")
+
+    def transform(self, sf: SignalFrame, state: Mapping[str, Any]) -> SignalFrame:
+        """Convert (see the class docstring)."""
+        check_streams(sf, self.streams)
+        values = sf.values
+        meta = dict(sf.meta)
+        for col in self.streams:
+            units = meta[col].units
+            if not units:
+                raise SignalConfigError(
+                    f"stream {col!r} has no units to convert from; set its units "
+                    "when the data is read.",
+                    field="streams",
+                    value=col,
+                )
+            if units == self.to:
+                continue
+            values[col] = convert(values[col].to_numpy(), units, self.to)
+            meta[col] = meta[col].model_copy(update={"units": self.to})
+        return sf.evolve(values=values, meta=meta)
 
 
 @register_step

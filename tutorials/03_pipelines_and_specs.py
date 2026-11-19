@@ -87,10 +87,12 @@ def _(synthetic):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## A pipeline is a list of steps
+    ## A pipeline is an ordered list of steps
 
-    These are the steps tutorial 2 ended with. Each step has a `kind`, and
-    you can also give it a `name`, which shows up in the provenance.
+    These are the steps tutorial 2 ended with. Create the pipeline, then add
+    the steps with `add_step`; they run in the order you add them. Each step
+    has a `kind`, and you can also give it a `name`, which shows up in the
+    provenance.
     """)
     return
 
@@ -98,18 +100,32 @@ def _(mo):
 @app.cell
 def _(fs):
     pipe = fs.Pipeline(
-        [
-            fs.clean.Range("flow", min=0, max=500, name="sentinels"),
-            fs.clean.Stuck("flow", min_duration="1h"),
-            fs.clean.RateOfChange("flow", max_rate=100, per="1h"),
-            fs.clean.Hampel("flow", window="1h", n_sigma=6, min_scale=1.0),
-            fs.impute.Interpolate("flow", max_gap="15min"),
-        ],
         name="flow_cleanup",
         description="Remove error codes, frozen runs and spikes; fill short gaps.",
     )
+    pipe.add_step(fs.clean.Range("flow", min=0, max=500, name="sentinels"))
+    pipe.add_step(fs.clean.Stuck("flow", min_duration="1h"))
+    pipe.add_step(fs.clean.RateOfChange("flow", max_rate=100, per="1h"))
+    pipe.add_step(fs.clean.Hampel("flow", window="1h", n_sigma=6, min_scale=1.0))
+    pipe.add_step(fs.impute.Interpolate("flow", max_gap="15min"))
     pipe
     return (pipe,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    You can also pass the steps as a list, which builds exactly the same
+    pipeline. Later tutorials use that form for short pipelines:
+
+    ```python
+    pipe = fs.Pipeline(
+        [fs.clean.Range("flow", min=0, max=500), fs.impute.Interpolate("flow", max_gap="15min")],
+        name="flow_cleanup",
+    )
+    ```
+    """)
+    return
 
 
 @app.cell(hide_code=True)

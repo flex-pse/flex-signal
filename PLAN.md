@@ -29,8 +29,9 @@ libraries listed in §6. flex-signal supplies:
   `$source` refs, migrations, and a committed JSON Schema. A pipeline can then be emitted, versioned, stored and
   re-run by flex-orchestrator.
 - G5: Provide one-call adapters:
-  - cleaned or forecast data → flex-pse `fix`/`dispatch` elements, spec patches and ARIMA history;
-  - cleaned data → `flexparameterize.apply_to_model` and surrogate fits;
+  - cleaned or forecast data → values on a flex-pse model's time grid, as `fix` elements (M3, M4; D24),
+    and ARIMA history once flex-pse releases it;
+  - cleaned data → a prepared `X, y` for flex-pse's regressors (M3);
   - Acquirium streams in (raw data) and out (cleaned data, forecasts, soft-sensor Apps).
 
 **Non-goals**
@@ -49,10 +50,10 @@ libraries listed in §6. flex-signal supplies:
 |---|---|---|
 | flex-pse `flexcore.config` | `_StrictModel` (`extra="forbid"`), `FlowsheetSpec` with `schema_version` and a `kind`-discriminated element union, `load_spec`, `dump_spec`, `MIGRATIONS`, `export_json_schemas`, `SourceRef {"$source": ...}`, `Quantity {value, units}` | Copy this pattern exactly for `SignalSpec`. |
 | flex-pse `flexcore.exceptions` | `FlexError` → `FlexConfigError(field=, value=)` and `FlexDataError`. Every message says what was wrong and what to do | Mirror the hierarchy and message rule in `flexsignal.core.exceptions` without importing flexcore (see §4.1 on import direction). |
-| flex-pse `flexops` | `apply_spec(model, elements)` applies `fix`, `unfix` and `dispatch` to a live model. `set_external_dispatch(var, series)`. Price and exogenous profiles are construction options, set before build. `TimeBlock` uses a naive local-time index, so `index_of` raises on off-grid timestamps | Our flex-pse adapter emits element dicts aligned to `TimeBlock.datetime_index`, or patches the spec before build. |
-| flex-pse `flexparameterize` (v0.3.0, the latest release) | `TagMap`, `check_sufficiency`, `apply_to_model(model, df, tagmap)`, a `Regressor` protocol, and the `constant_intensity` and `multilinear` regressors. ARIMA is still reserved in v0.3.0. On flex-pse's `arima_integration` branch, `ArimaRegressor` **refuses NaNs and uneven steps** and tells the user to "resample and impute" | flex-signal is that missing "resample and impute" step. Our output must be a regular-grid DataFrame with no gaps and columns named by model alias. |
+| flex-pse `flexops` | `apply_spec(model, elements)` applies `fix`, `unfix` and `dispatch` to a live model. `set_external_dispatch(var, series)`. Price and exogenous profiles are construction options, set before build. `TimeBlock` uses a naive local-time index, so `index_of` raises on off-grid timestamps | `integrations.flexpse` builds `fix` elements on `TimeBlock.datetime_index` (`apply_values`, on a spec before build or a model after), taking over flex-orchestrator's versions (D22). |
+| flex-pse `flexparameterize` (0.3.1, the latest release) | `TagMap`, `check_sufficiency`, `apply_to_model(model, df, tagmap)`, a `Regressor` protocol, and the `constant_intensity` and `multilinear` regressors. ARIMA is still reserved in 0.3.1. On flex-pse's `arima_integration` branch, `ArimaRegressor` **refuses NaNs and uneven steps** and tells the user to "resample and impute" | flex-signal is that missing "resample and impute" step. Our output must be a regular-grid DataFrame with no gaps and columns named by model alias. |
 | flex-pse `flexparameterize/tests/test_time_series_data/` (on the `arima_integration` branch; not in any release yet) | Public hourly biogas data (`bio_gas_generation.csv`: feed volume, TS %, biogas m³/h; ~1,440 rows), its 15-minute linear interpolation, and the `impute_timeseries.py` script that made it | The **one permitted outside dataset** (see §8, "Test data"). flex-signal's `interpolate` step supersedes the script, and must reproduce its output. |
-| flex-orchestrator | Plugin system: entry-point group `flex_orchestrator.plugins`, `@command(params=PydanticModel)`, `orch.store_data` / `get_data`, events. **The `StudyConfig` sweep union is closed.** `fitting/prep.py` and `inputs/resolve.py` already do basic align, resample and gap filling | flex-orchestrator will wrap flex-signal directly once flex-signal is stable. We ship no plugin; instead our API follows the orchestrator's calling conventions (§4.3). |
+| flex-orchestrator (pins flex-pse 0.3.1) | Plugin system: entry-point group `flex_orchestrator.plugins`, `@command(params=PydanticModel)`, `orch.store_data` / `get_data`, events. **The `StudyConfig` sweep union is closed.** `inputs/resolve.py` lines stored data up with a model's time steps (time zone, `offset`/`data_years`, interval resampling, gap rules, `reduce`, several time blocks); `fitting/prep.py` prepares fit data; `flexpse/build.py` turns values into `fix` elements | These data functions **move to flex-signal** in M3 and flex-orchestrator calls them (D22, `FLEX_ORCHESTRATOR_OVERLAP.md`). flex-orchestrator keeps stores, studies, sweeps, regressor wrappers and Ray. We ship no plugin (D6) |
 | Acquirium (alpha, 0.4.0a8; build against `upstream/main`) | Python client returns **polars**. Data is stored in UTC. Writes need `register_streams` and then `insert_timeseries_arrow`. Derived streams are `aq.App` subclasses running **inside the server**; their module digest is pinned, and outputs must contain no nulls. There are no quality-flag columns and only one value per `(stream, ts)` | Use pandas internally and convert at the boundary. Ship one stable `PipelineApp` class whose behaviour comes entirely from parameters (the spec). Write flags as separate streams. Store forecast issuances as experiment runs or as per-horizon streams. |
 | flows-prep (legacy, py<3.12) | Tukey and rate-of-change outlier removal, stuck-value detection, short-gap interpolation with a consecutive-NaN limit, lagged ElasticNet imputation, Fourier features, blocked CV, clipping to bounds. PyPOTS was planned but never committed | This is the method inventory to port as thin steps. Keep its config ideas, not its code. |
 | flows-mpc (legacy) | statsforecast MSTL, statsmodels, a Keras seq2seq model, MLflow tracking | Confirms Nixtla and statsmodels as the forecasting backbone. Drop TensorFlow and use torch-based extras. |
@@ -89,9 +90,11 @@ src/flexsignal/
   backends/        lazy-imported adapters: sklearn, statsmodels, scipy, pypots, skforecast, nixtla, darts, sktime, chronos
   pipeline.py      Pipeline / FittedPipeline (fit, transform, forecast, save, load)
   io/              parquet (+ arrow metadata), csv
-  eval/            masking benchmark for imputers (pygrinder), forecast backtesting metrics
+  eval/            masking benchmark for imputers, fit and forecast metrics
+  handoff/         data to models: to_grid (values per model time step), fit_data (X, y for a regressor),
+                   time-scope path rules; no model library imported (M3, D22)
   integrations/
-    flexpse/       elements, spec patching, ARIMA history, flexparameterize hand-off
+    flexpse/       time_grid of a spec or model, apply_values to a spec or model (fix elements); flex-pse lazily
     acquirium/     source, sink, PipelineApp (last phase)
   api.py           run / fit / backtest entry points: the orchestrator-ready contract (§4.3)
 ```
@@ -99,7 +102,7 @@ src/flexsignal/
 import-linter layering (same tool as flex-pse):
 
 ```
-core <- {spec | io} <- backends <- steps <- pipeline <- {eval | api} <- integrations.{flexpse | acquirium}
+core <- {spec | io} <- backends <- steps <- pipeline <- {eval | api | testing | handoff} <- integrations.{flexpse | acquirium}
 ```
 
 Each `integrations.*` package imports its third-party target only inside itself. Each is behind its own extra.
@@ -107,9 +110,11 @@ Each `integrations.*` package imports its third-party target only inside itself.
 **Import direction with flex-pse.** flex-pse workflows import flex-signal, so flex-signal must never import flex-pse
 at module import time. This rules out circular imports in either direction. import-linter enforces two rules:
 
-- no module outside `integrations.flexpse` may import `flexcore`, `flexops` or `flexparameterize`;
-- `integrations.flexpse` itself imports flex-pse only lazily, inside functions, and only for `flexparameterize`.
-  The time grid is duck-typed (§4.1).
+- no module outside `integrations.flexpse` may import `flexcore`, `flexops`, `flexparameterize`, `flexdesign`,
+  `pyomo` or `idaes`;
+- `integrations.flexpse` itself imports flex-pse only lazily, inside functions: `flexops` to read a spec's time
+  element, find a built model's time blocks and apply `fix` elements. It doesn't import `flexparameterize`:
+  flex-signal stops at a prepared `X, y` (D22).
 
 `import flexsignal` therefore never pulls in pyomo or idaes.
 
@@ -166,7 +171,8 @@ and a fitted pipeline saves as JSON and pickles for Ray. `Pipeline.fit` / `Fitte
 familiar sklearn feel at the pipeline level.
 
 - **Backends** are registered by a string key, for example `"sklearn:HuberRegressor"`, `"statsmodels:SARIMAX"`,
-  `"pypots:SAITS"`, `"nixtla:AutoETS"`, `"chronos:chronos-2"`, or `"pkg.mod:Class"` for user code. Each key maps
+  `"pypots:SAITS"`, `"nixtla:AutoETS"` or `"chronos:chronos-2"`. User code adds its own methods by registering them
+  (§3.8); a spec never names an import path (D17, D21). Each key maps
   to a small adapter that turns a `SignalFrame` into the shape the library wants and back again, keeping the
   index. Examples:
   - PyPOTS needs `{"X": [n, T, F]}` windows.
@@ -179,14 +185,19 @@ familiar sklearn feel at the pipeline level.
 
 ### 3.4 Conditions and selection
 
-Conditions use a small expression language that compiles to a boolean mask. It uses
-`pandas.DataFrame.eval`/`query` syntax over stream names: `"C == 0 and D == 0 and B > 0"`. Before pandas sees a
-condition, `check_condition` parses it with `ast` and allows only stream names, numbers, arithmetic, comparisons,
-boolean operators and a fixed list of math functions, so a condition can't run code (D15). New helpers must be
-added to that allowlist explicitly. On top of that it adds:
+Conditions use a small expression language that compiles to a boolean mask, with Python syntax over stream
+names: `"C == 0 and D == 0 and B > 0"`. `check_condition` parses it with `ast` and allows only stream names,
+numbers, arithmetic, comparisons, boolean operators and a fixed list of math functions, so a condition can't run
+code (D15). Since M2, flex-signal also evaluates the parsed tree itself with numpy, so `pandas.eval` is no longer
+involved (D16). New helpers must be added to the allowlist explicitly. On top of that it adds (M2):
 
-- duration helpers: `held("C == 0", "30min")` means the condition has been true for at least 30 minutes;
-- flag predicates: `is_raw("B")`, `not flagged("A", "OUTLIER")`.
+- a duration helper: `held(C == 0, "30min")` means the condition has been true, without a break, for at least
+  30 minutes;
+- flag and value predicates: `valid(B)`, `is_raw(B)`, `not flagged(A, "OUTLIER")`.
+
+Conditions are type-checked when a spec loads (a condition must give True/False; `and`/`or`/`not` need
+True/False operands). The same language without the helpers gives **formulas**, numeric expressions with fitted
+parameters, e.g. `"a + b * A"` for `scipy:curve_fit`.
 
 Every step that fits or applies something accepts `fit_when` and `apply_when`. This is how the multi-stream
 example is expressed without custom code.
@@ -202,8 +213,9 @@ variable error. The `calibrate` step works like this:
 3. **Prefer the reference.** With `prefer_reference=True`, `A_clean` takes B's own value wherever B is valid and
    trusted. Elsewhere it uses the calibrated A, and those values are flagged `CORRECTED`.
 4. **Track drift.** With `refit="rolling"`, the calibration is refit over a moving window of trusted B samples,
-   for example with statsmodels `RecursiveLS` or a windowed sklearn fit. The calibration then follows drift
-   between reference periods.
+   using the same model on each window. The calibration then follows drift between reference periods. (M2 refits
+   per block of time, `every`, on the window ending with that block; windows with too few trusted rows fall back
+   to the model fitted on the training data.)
 
 `report()` covers how many samples were fit, residual statistics, and for each sample whether it was referenced,
 calibrated or still missing.
@@ -216,18 +228,20 @@ pipe = fs.Pipeline(name="stream_a_cleanup", steps=[
     fs.clean.Range("B", min=0),                                    # basic hygiene first
     fs.clean.Hampel(["A", "B"], window="15min", n_sigma=3),
     fs.correct.Calibrate(
-        name="A_clean",
         target="A",                         # stream with the variable error
         reference="B",                      # trusted signal while the condition holds
         features=["A"],                     # model input(s); add others if the error depends on them
         fit_when="C == 0 and D == 0 and B > 0",
-        apply_when=None,                    # None = apply everywhere A is valid
-        model="sklearn:HuberRegressor",     # or "scipy:curve_fit:mypkg.forms:temp_comp", "statsmodels:RLM", ...
-        prefer_reference=True,              # use B itself where B is valid; calibrated A elsewhere
-        refit="static",                     # or {"rolling": "30D"} to follow drift between reference periods
-        output="new",                       # write A_clean as a new stream (default) or "replace" A
+        apply_when=None,                    # None = apply everywhere; elsewhere A passes through unchanged
+        model="sklearn:HuberRegressor",     # or "statsmodels:RLM", or "scipy:curve_fit" with formula=/initial=
+        prefer_reference=True,              # use B itself on the trusted rows; calibrated A elsewhere
+        refit="static",                     # or {"rolling": "2D"} to follow drift between reference periods
+        output="A_clean",                   # the default, <target>_clean; output="A" replaces A
     ),
-    fs.impute.Tiered("A_clean", short=("interpolate", "15min"), long="kalman"),
+    fs.impute.Tiered("A_clean", tiers=[
+        {"max_gap": "15min", "method": "interpolate"},
+        {"max_gap": None, "method": "kalman"},
+    ]),
 ])
 
 fitted = pipe.fit(sf_train)
@@ -247,11 +261,11 @@ The same pipeline as a spec. Python and JSON/YAML are interchangeable, both dire
     {"kind": "align", "freq": "1min", "how": "inner"},
     {"kind": "range", "streams": ["B"], "min": 0},
     {"kind": "hampel", "streams": ["A", "B"], "window": "15min", "n_sigma": 3},
-    {"kind": "calibrate", "name": "A_clean", "target": "A", "reference": "B", "features": ["A"],
+    {"kind": "calibrate", "target": "A", "reference": "B", "features": ["A"],
      "fit_when": "C == 0 and D == 0 and B > 0", "model": "sklearn:HuberRegressor",
-     "prefer_reference": true, "refit": "static"},
-    {"kind": "impute_tiered", "streams": ["A_clean"], "short": {"method": "interpolate", "max_gap": "15min"},
-     "long": {"method": "kalman"}}
+     "prefer_reference": true, "refit": "static", "output": "A_clean"},
+    {"kind": "tiered", "streams": ["A_clean"], "tiers": [
+      {"max_gap": "15min", "method": "interpolate"}, {"max_gap": null, "method": "kalman"}]}
   ],
   "outputs": [{"kind": "parquet", "path": "clean.parquet"}]
 }
@@ -278,61 +292,150 @@ The spec mirrors `flexcore.config` one for one:
 
 ### 3.7 Forecasting
 
-- `Forecast` step: `target`, `exog` (past and known-future covariates), `horizon`, `freq`, `backend`, `params`,
-  `quantiles` (optional), and `issue_time` semantics.
-- `Backtest(forecaster, folds=..., horizon=...)` → metrics table. It uses blocked, time-ordered folds, the same idea
-  as flows-prep's `get_train_test_folds`. Its output feeds flex-pse model selection.
-- The output is a `SignalFrame` flagged `FORECAST` that carries `issue_time` metadata. Optional quantile columns
-  are named `<stream>__q10` and so on.
+- Forecast steps (`fs.forecast.Structural`, `Regression`, `SeasonalNaive`, `Persistence`) take the target
+  `streams`, `horizon`, `issue_time`, `exog` (streams known ahead) and `quantiles`, plus their method's options.
+  A forecast step writes the future rows of the frame (D25): it runs from a JSON spec after the cleaning steps, and
+  values known ahead are rows after the issue time in the input.
+- `fs.backtest(spec, data, folds=..., compare=[...])` → scores per method and fold. It uses blocked, time-ordered
+  folds, the same idea as flows-prep's `get_train_test_folds`, and hides everything except `exog` after each issue
+  time. Its output feeds flex-pse model selection.
+- The output is a `SignalFrame` whose forecast rows are flagged `FORECAST`; the target's metadata carries
+  `issue_time`. Optional quantile columns are named `<stream>__q10` and so on.
+- A forecast reaches a flex-pse model as fixed values, through `handoff.to_grid` and `apply_values` (D24).
+
+### 3.8 Your own methods (extension API, M5)
+
+Users building their own flex-signal workflow need to plug in their own cleaning, imputation, forecasting and
+correction methods and run them from a JSON spec, without changing flex-signal's source. The rule that keeps this
+safe (D21):
+
+> **Only registered methods can run.** A method is registered by code: the user's script, or an installed
+> package. A spec refers to it by name only. A spec never names an import path, and loading or running a spec
+> never imports anything.
+
+So a spec from someone else can only use methods the person running it has chosen to make available.
+
+**Registering a method.** One function per role turns a plain Python function into a full step:
+
+```python
+import flexsignal as fs
+
+def despike(values, *, window: str = "1h", k: float = 4.0):
+    """Return True where a value should be rejected."""
+    ...
+
+def fill_from_neighbours(values, gaps, state, *, features: list[str], weight: float = 1.0):
+    """Return proposed values; only the positions in `gaps` are used."""
+    ...
+
+fs.register_cleaner("PlantDespike", despike, flag="OUTLIER")
+fs.register_imputer("CustomMethod", fill_from_neighbours)
+
+pipe = fs.Pipeline([
+    fs.clean.PlantDespike("flow", window="30min"),
+    fs.impute.CustomMethod("flow", features=["pressure"], weight=0.5, max_gap="6h"),
+])
+```
+
+and in a spec, once the same functions are registered:
+
+```json
+{"kind": "PlantDespike", "streams": ["flow"], "window": "30min"},
+{"kind": "CustomMethod", "streams": ["flow"], "features": ["pressure"], "weight": 0.5, "max_gap": "6h"}
+```
+
+| Function | The user's function does | flex-signal does |
+|---|---|---|
+| `register_cleaner(name, fn, flag=...)` | returns which values to reject | sets them to NaN, adds the flag, skips values already missing |
+| `register_imputer(name, fn, fit=None)` | proposes values for the gaps it is given | finds the gaps (`max_gap`, never `EXCLUDED` or `NO_SAMPLE`), writes only into them, flags `IMPUTED_MODEL`; usable as a `tiered` tier by name |
+| `register_forecaster(name, fn, fit=None)` | returns values for the horizon, from history and known future inputs | the M4 `Forecaster` protocol: issue time, `FORECAST` flag, quantile columns, backtesting |
+| `register_model(name, cls)` | a scikit-learn-style regressor whose fitted `coef_`/`intercept_` describe it | makes it a `model` choice for `calibrate` and `regression`; the fitted state stays JSON |
+
+- **Options come from the function's signature.** Keyword-only parameters, with their type hints and defaults,
+  become the step's fields through a generated pydantic model. JSON options are validated like any built-in step's,
+  and errors name the field (`steps.3.weight: ...`). The standard fields (`streams`, `name`, and `max_gap` for
+  imputers) are added by flex-signal.
+- **Fitting.** An optional `fit(values, **options) -> dict` learns from training data. Its result must be JSON, as
+  for built-in steps (D9), so fitted pipelines still save without pickle.
+- **Names.** A registered name must be a Python identifier and must not clash with a built-in kind. It is the
+  step's `kind` in JSON and its name in `fs.clean` / `fs.impute` / `fs.forecast` (resolved by each module's
+  `__getattr__`). Packages shared between teams should prefix their names, e.g. `PlantDespike`.
+- **Unregistered methods are errors**, raised when the spec loads: *unknown step kind 'CustomMethod'; register it
+  first, e.g. fs.register_imputer('CustomMethod', fn), or install the package that provides it*.
+
+**Making methods available without editing flex-signal.** Three ways, all chosen by the person running the spec:
+
+1. Register in the script, before loading the spec (as above).
+2. Install a package that registers its methods through the existing `flexsignal.steps` entry-point group; they
+   are available as soon as the package is installed.
+3. Name the modules to load in the call: `fs.load_plugins("myplant.methods")`, or
+   `fs.run(spec, data, plugins=["myplant.methods"])`. The module list comes from the caller's code, never from the
+   spec. A spec may list what it needs under `"requires": ["myplant.methods"]`, but only so the error message can
+   say what to install; flex-signal never imports from it.
+
+**Provenance and reuse.** Each history record of a custom step names the function behind it (module, qualified
+name, and the providing package's version), so a result says which code produced it. Loading a saved fitted
+pipeline needs the same methods registered first. For Ray workers, register from an importable module (option 2
+or 3) so workers can register the same methods.
+
+**One path for everyone.** `register_step` with a `StepSpec` subclass stays as the low-level route for full
+control. M5's own adapters (PyPOTS, Chronos, pyod, ...) are registered through the same public functions, so the
+extension API is exercised by flex-signal itself. The `function` step of the Derive category (§6) becomes a
+registered function looked up by name, not an import path in the spec.
 
 ---
 
 ## 4. Ecosystem integration
 
-### 4.1 flex-pse (always the latest flex-pse release; currently v0.3.0)
+### 4.1 flex-pse and the hand-off to models (always the latest flex-pse release; currently 0.3.1)
 
-flex-signal has two direct points of contact with flex-pse:
+flex-signal, flex-pse and flex-orchestrator are used together, but everything must also work **in a plain script
+without flex-orchestrator**. So the data work of handing timeseries to a model lives in flex-signal, and
+flex-orchestrator calls it (D22). Until M3 these functions live in flex-orchestrator (`inputs/resolve.py`,
+`inputs/scopes.py`, `fitting/prep.py`, `flexpse/timegrid.py`, `flexpse/build.py`). M3 moves them here with their
+tests and behaviour unchanged. `FLEX_ORCHESTRATOR_OVERLAP.md` is the item-by-item inventory and migration plan.
 
-1. **Aligning to the time grid.** flex-signal resamples data onto a flex-pse `TimeBlock`. `TimeBlock` is an IDAES
-   block, and importing it pulls in pyomo and idaes, so flex-signal never imports it. Instead, `to_grid(sf, grid)`
-   duck-types `grid` and accepts any of:
-   - an object with a `.datetime_index` attribute (`TimeBlockData`, or a model via `find_time_block`, called by the
-     flex-pse side);
-   - a `pd.DatetimeIndex`;
-   - a flex-pse `time` element dict `{start_date, end_date, time_step}`.
-2. **Handing data to flexparameterize.** `to_parameterize(sf, tagmap=None)` returns the gap-free DataFrame that
-   `flexparameterize.apply_to_model` and the regressors expect: a DatetimeIndex with model-alias columns. If a
-   `TagMap` is given, the column mapping is delegated to it. This is the only place flexparameterize is imported,
-   and only lazily.
+Two packages, split by whether they need a model library:
 
-Everything else is plain data with no flex-pse import, and the flex-pse workflow applies it:
+- **`flexsignal.handoff`** (pure data, no flex-pse import):
+  - `to_grid(data, grid, options) -> GridValues`: one value per model time step. It converts UTC to the
+    facility's wall clock and drops the zone, reads another window (`offset`) or another year's dates
+    (`data_years`), resamples `forward` `[t, t+dt)` or `backward` `(t-dt, t]` with an `agg`, splits coarser
+    summed amounts over whole steps, and applies a gap rule (`interpolate` / `ffill` / `zero` / `error`, with a
+    `limit`), or `reduce`s the horizon to one number. `GridValues` carries the values, units (`^`, not `**`),
+    how many steps were filled, a data hash, and `to_overrides(rename=...)`. With a `SignalFrame`, samples
+    flagged `EXCLUDED` or `NO_SAMPLE` aren't samples, and steps resting on filled or corrected values are
+    reported.
+  - `data_window(grid, options)`: the UTC window to read for a horizon, with the margin end gaps need.
+  - `GridOptions`: those options as a pydantic model, with flex-orchestrator's field names and defaults.
+  - `grids_of`, `scope_of`, `targets`: which time block a model path belongs to, for models with several.
+  - `fit_data(X, y, prep) -> FitData`, `split_holdout`, `data_hash`, `FitPrep`: join input and output frames,
+    resample, apply a gap rule (`error` / `drop` / `interpolate` / `longest_segment`), guard the row count,
+    and hash the result. **flex-signal stops here**: a script passes `X, y` to a flex-pse regressor itself.
+    flex-orchestrator keeps its regressor wrappers for sweeps and automated fits.
+- **`flexsignal.integrations.flexpse`** (imports flex-pse lazily):
+  - `time_grid(spec_or_model)`: the time points of a flowsheet spec's time element, or of a built model's time
+    blocks, one axis per scope. Design specs stay in flex-orchestrator, which calls this per horizon.
+  - `apply_values(spec_or_model, values)`: the same values on either, with the same result. On a flowsheet spec,
+    a copy with one named `fix` element per value; a path into a `costing` element edits that field (how a flat
+    price is set). On a built model, in place: mutable Params (a price built as a Param) are set, and the rest are
+    fixed, grouped by time block, via `flexops.apply_spec`.
 
 ```python
+from flexsignal import handoff
 from flexsignal.integrations import flexpse as fsp
 
-grid = fsp.to_grid(clean, model.fs.time)             # resample + check: no NaN, exact grid
-data = fsp.to_parameterize(clean, tagmap)            # -> flexparameterize.apply_to_model(model, data, tagmap)
+clean = fs.run(spec, raw).signal                                   # clean, calibrate, fill
+grid = fsp.time_grid(model)
+values = handoff.to_grid(clean, grid, handoff.GridOptions(timezone="America/Los_Angeles", gaps="error"))
+fsp.apply_values(model, values.to_overrides(rename={"A_clean": "plant.feed.flow_vol"}))
 
-# Plain-dict spec elements; the flex-pse caller passes them to flexops.apply_spec or adds them to a FlowsheetSpec
-elements = fsp.to_elements(grid, mapping={
-    "A_clean": {"kind": "fix", "variable": "plant.feed.flow_vol", "units": "m^3/hr"},
-    "price":   {"kind": "dispatch", "unit": "grid", "variable": "electricity"},
-})
-
-# Before build: return a patched copy of a FlowsheetSpec *dict* (energy_prices, capacity_factor, Feed limits)
-spec_dict = fsp.patch_spec(spec_dict, grid, {"costing.energy_prices.electrical": "price"})
+fit = handoff.fit_data(clean.select(["flow"]), clean.select(["power"]), handoff.FitPrep(resample={"freq": "1h"}))
+regressor = LinearRegressor().fit(fit.X, fit.y)                    # flex-pse, called directly
 ```
 
-`arima_history(...)`, for seeding an ARIMA surrogate, is deferred until a flex-pse release ships the ARIMA surrogate.
-v0.3.0 does not.
-
-Rules the adapter enforces:
-
-- Convert UTC to the facility's local time and make the index naive, because the orchestrator treats flex-pse
-  time as local wall clock.
-- Resample onto `TimeBlock.datetime_index`.
-- Refuse leftover NaNs with a `FlexDataError` that names the gap and suggests an imputer.
-- Pass units through as pyomo strings (`^`, not `**`).
+`arima_history(...)`, for seeding an ARIMA surrogate, waits for a flex-pse release with the ARIMA surrogate. It is
+on flex-pse `main` (merged 2026-11-10) but not in 0.3.1.
 
 ### 4.2 Acquirium (`flex-signal[acquirium]`, last phase)
 
@@ -360,25 +463,27 @@ Parquet. The design below is provisional and will be re-checked against acquiriu
 
 ### 4.3 flex-orchestrator: an orchestrator-ready API
 
-flex-signal ships **no orchestrator code**. Once flex-signal has a stable release, flex-orchestrator will add a
-direct wrapper on its own side, as commands and/or a `signals:` stage in `StudyConfig`. Our job is to make that
-wrapper trivial. The public API therefore follows this contract, which matches how the orchestrator already calls
+flex-signal ships **no orchestrator code**. flex-orchestrator depends on flex-signal: from M3 it calls
+`flexsignal.handoff` and `flexsignal.integrations.flexpse` for `model_inputs` and fit preparation (D22,
+`FLEX_ORCHESTRATOR_OVERLAP.md`), and once flex-signal is stable it adds a wrapper for running specs, as commands
+and/or a `signals:` stage in `StudyConfig`. Our job is to make both trivial. The public API therefore follows this contract, which matches how the orchestrator already calls
 flex-pse and its regressors:
 
 | Contract | What it means for our API |
 |---|---|
-| **Pure functions with a spec in and JSON-able results out** | `flexsignal.run(spec, data) -> RunResult`, `flexsignal.fit(spec, data) -> FittedPipeline`, `fitted.transform(data)`, `fitted.forecast(data, issue_time=, horizon=)`, `flexsignal.backtest(spec, data, folds=)`. `spec` may be a `SignalSpec`, a dict or a path. These map one-to-one onto orchestrator `@command`s whose params model simply embeds `SignalSpec` |
+| **Pure functions with a spec in and JSON-able results out** | `flexsignal.run(spec, data) -> RunResult`, `flexsignal.fit(spec, data) -> FittedPipeline`, `fitted.transform(data)` (a forecast step in it issues from the newest data), `flexsignal.backtest(spec, data, folds=)`. `spec` may be a `SignalSpec`, a dict or a path. These map one-to-one onto orchestrator `@command`s whose params model simply embeds `SignalSpec` |
 | **No I/O inside the pipeline when data is passed in** | Spec `inputs` are *named slots*, e.g. `{"kind": "frame", "name": "historian"}`. The caller binds them: `data={"historian": (df, units)}`. Orchestrator `Selector`s resolve to these slots. File and Acquirium inputs exist only for standalone use |
 | **The orchestrator's data shape** | Data goes in and out as a `pd.DataFrame` with a tz-aware UTC `DatetimeIndex` plus `units: dict[str, str]`, exactly what `orch.get_data` / `orch.store_data(name, df, units=)` use. `RunResult` exposes `.data`, `.units`, `.flags` (DataFrame), `.report` (JSON-able dict), `.spec_hash`, `.provenance` |
 | **Storage-agnostic fitted state** | `FittedPipeline.to_payload() -> {"spec": dict, "state": dict, "blobs": dict[str, bytes]}` and `FittedPipeline.from_payload(...)`. Directory save/load is built on top of this. The orchestrator can then store fits in any backend (file, memory, Acquirium) |
 | **Ray-safe** | No global mutable state. Fitted pipelines are picklable. Random seeds are explicit in the spec. Backends are imported lazily on workers |
 | **Progress and errors** | An optional `progress: Callable[[float, str], None]` that the orchestrator's `Progress` adapts to. All errors subclass `SignalError` with `field=` dotted paths, so the command ledger records something actionable |
 | **Embeddable schema** | `SignalSpec` and its JSON Schema are exported with stable `kind` names and `schema_version` migrations, so `StudyConfig` can embed a `signals:` list without redefining it |
-| **Time semantics** | UTC internally. Naive input timestamps are taken as the machine's local time with a `NaiveTimestampWarning` (D14), so the orchestrator should always pass tz-aware data or set `timezone`. Local naive time is emitted only at `flexpse.to_grid(..., timezone=)`, matching the orchestrator's `model_inputs.timezone` handling |
+| **Time semantics** | UTC internally. Naive input timestamps are taken as the machine's local time with a `NaiveTimestampWarning` (D14), so the orchestrator should always pass tz-aware data or set `timezone`. Local naive time is emitted only by `handoff.to_grid` (`GridOptions.timezone`, default `"UTC"` as in the orchestrator), which is the orchestrator's own `model_inputs` alignment once it moves here (D22) |
 
 **Verification:** `tests/contract/` exercises this contract without importing flex-orchestrator. It wraps the
 API in a pydantic params model, JSON round-trips specs, results and payloads, and pickles a fitted pipeline. An
-optional integration test runs against flex-orchestrator's memory backend when it is installed.
+optional integration test runs against flex-orchestrator's memory backend when it is installed. The handoff
+functions carry flex-orchestrator's own alignment and fit-prep tests, ported as pure-data tests (M3).
 
 The orchestrator wrapper will also let us retire the orchestrator's own gap filling (`fitting/prep.py`,
 `inputs/resolve.py`). That change is up to the flex-orchestrator side.
@@ -397,19 +502,19 @@ Default: include it.
 
 | Extra | Packages | Purpose |
 |---|---|---|
-| `pypots` | pypots (+ pygrinder) | Deep imputation and forecasting (SAITS, BRITS, CSDI, TimesNet). Pulls in torch and transformers |
-| `eval` | pygrinder | Masking-based imputer benchmarking (MCAR and block gaps) without torch |
-| `ml` | skforecast, lightgbm | Lightweight, pandas-native ML forecasting with exogenous variables |
-| `nixtla` | statsforecast, mlforecast | Fast AutoARIMA, ETS, MSTL and Theta. Successor to the flows-mpc stack |
-| `deep` | neuralforecast | NHITS, TiDE, PatchTST |
-| `foundation` | chronos-forecasting (Chronos-2); timesfm optional | Zero-shot forecasting. **TimesFM-3 weights are non-commercial**; we guard against them and default to Chronos (Apache-2.0) |
+| `pypots` | pypots (+ pygrinder) | Deep imputation and forecasting (SAITS, BRITS, CSDI, TimesNet), and pygrinder's missing-data patterns for the benchmark. Pulls in torch and transformers. M2's benchmark hides block and random gaps itself, so there is no separate `eval` extra (D20) |
+| `ml` | skforecast, lightgbm | Lightweight, pandas-native ML forecasting with exogenous variables. **On hold:** skforecast requires `pandas<3` (D23, O2) |
+| `nixtla` | statsforecast, mlforecast | Fast AutoARIMA, ETS, MSTL and Theta. Successor to the flows-mpc stack. **On hold:** both require `pandas<3` (D23, O2) |
+| `deep` | neuralforecast | NHITS, NBEATS(x), MLP, LSTM, TiDE, PatchTST, DLinear (M5) |
+| `foundation` | chronos-forecasting (Chronos-2); timesfm optional (2.5) | Zero-shot forecasting, Apache-2.0 weights only (D29) |
+| `t0` | tfc-t0 | t0-alpha zero-shot forecasting (Apache-2.0). tfc-t0 needs huggingface-hub ≥1 and PyPOTS 2.0 needs <1, so `[t0]` can't be installed with `[pypots]` and isn't in `[all]`; CI tests it in its own job |
 | `darts` | darts | Wide model zoo through an adapter. Heavy, and opt-in only |
 | `sktime` | sktime | Adapter to the sktime estimator zoo |
-| `anomaly` | pyod, ruptures, stumpy | ML outlier detectors, change points (regime and drift), matrix-profile discords |
+| `anomaly` | pyod, ruptures, stumpy | ML outlier detectors, change points (regime and drift), matrix-profile discords. ruptures has no Python 3.14 wheels yet |
 | `features` | tsfresh | Feature extraction for regression imputers |
-| `units` | pint, pint-pandas | Boundary unit conversion. Pint 0.26 needs Python ≥3.12 |
+| `units` | pint | Unit conversion where asked: `convert_units`, and `range` bounds in other units (M5). Pint 0.26 needs Python ≥3.12, so the floor is 0.24 |
 | `symbolic` | pysr | Symbolic-regression correction models. Needs a Julia runtime |
-| `flexpse` | flex-pse with `parameterize`, **the latest release** (now v0.3.0) | Used only in tests and for `to_parameterize`. flex-pse is the importer, not a dependency of core. flex-pse is not on PyPI, and PyPI rejects git URLs in a published package's metadata. So until flex-pse is published, the pin lives in `environment.yml` and CI as `flex-pse[parameterize] @ git+https://github.com/flex-pse/flex-pse.git@<tag>`, the same way flex-orchestrator pins it. The tag's dist-info still says 0.1.0, so pin by tag, never by `==version`. Once flex-pse is on PyPI, the extra becomes `flex-pse[parameterize]>=<latest>` |
+| `flexpse` | flex-pse, **the latest release** (now 0.3.1) | Used by `integrations.flexpse` (`time_grid`, `apply_values`) and its tests. flex-pse is the importer, not a dependency of core. flex-pse is not on PyPI, and PyPI rejects git URLs in a published package's metadata. So until flex-pse is published, the pin lives in `environment.yml` and CI as `flex-pse[parameterize] @ git+https://github.com/flex-pse/flex-pse.git@<tag>`, the same way flex-orchestrator pins it. The tag's dist-info still says 0.1.0, so pin by tag, never by `==version`. Once flex-pse is on PyPI, the extra becomes `flex-pse[parameterize]>=<latest>` |
 | `acquirium` | acquirium (tracks `main`) | Source, sink and PipelineApp (phase 7) |
 | `dev` | pytest, pytest-cov, pytest-xdist, ruff, black, import-linter, pre-commit | Same pins as flex-pse |
 
@@ -441,26 +546,27 @@ thin pandas-native protocol on sklearn's `BaseEstimator`, and treat sktime and d
 |---|---|---|
 | Select | `align`, `resample`, `window`, `mask`, `rename`, `combine`, `shift` | pandas |
 | Clean | `range`, `rate_of_change`, `stuck`, `hampel`, `tukey`, `expression` | pandas (in-house, ~15 lines each; ported from flows-prep) |
-| Clean | `filter` (savgol, butterworth `sosfiltfilt`, median) | scipy.signal |
+| Clean | `filter` (savgol, butterworth `sosfiltfilt`, median); sets `FILTERED` (D18) | scipy.signal / pandas |
 | Clean | `changepoint` | ruptures `[anomaly]` |
 | Clean | `detector` | pyod `[anomaly]` |
 | Clean | `detotalize` (totalizer → rate) | pandas (from flows-prep) |
-| Correct | `calibrate` (map/residual, `fit_when`/`apply_when`) | sklearn / statsmodels / `scipy.optimize.curve_fit` / pysr |
+| Correct | `calibrate` (map/residual, `fit_when`/`apply_when`) | sklearn / statsmodels linear models, `scipy.optimize.curve_fit` on a checked formula (D17); pysr later under `[symbolic]` |
 | Correct | `mass_balance` (reconcile children to parent) | scipy.optimize least squares |
 | Impute | `interpolate` (linear/time/pchip/akima, `max_gap`) | pandas / scipy |
 | Impute | `kalman` | statsmodels state space (`UnobservedComponents` / `SARIMAX` smoother) |
 | Impute | `regression` (lags, Fourier, other streams) | sklearn (ElasticNet / GBM) |
-| Impute | `knn`, `iterative` | sklearn |
+| Impute | `knn`, `iterative` (fitted on the data they fill; D19) | sklearn |
 | Impute | `pypots` | PyPOTS `[pypots]` |
 | Impute | `tiered` | Composition of the methods above, routed by gap length |
 | Forecast | `forecast`, `backtest` | statsmodels, skforecast, statsforecast, neuralforecast, chronos, pypots, darts/sktime adapters |
-| Derive | `expression`, `function` (`"pkg.mod:fn"`) | checked conditions (D15) / user code. `function` imports and runs code by design, so it must be opt-in for specs from elsewhere |
+| Derive | `expression`, `function` | checked conditions (D15) / a registered function, looked up by name (§3.8, D21) |
+| Any | user-registered cleaners, imputers, forecasters and models | the user's own code, registered before the spec loads (§3.8, D21) |
 
 ---
 
 ## 7. Documentation
 
-The documentation mirrors flex-pse's setup (`docs/`, `.github/workflows/docs.yml`; first mirrored from v0.2.0 and kept in step with each flex-pse release, now v0.3.0), so the two projects
+The documentation mirrors flex-pse's setup (`docs/`, `.github/workflows/docs.yml`; first mirrored from v0.2.0 and kept in step with each flex-pse release, now 0.3.1), so the two projects
 read as one ecosystem.
 
 **Tooling**
@@ -505,8 +611,8 @@ docs/
                      imputation_tiers, forecasting_and_backtesting, time_and_units, flexpse_integration,
                      orchestrator_contract, acquirium_integration (M7)
   how_to/            clean_a_stream, calibrate_against_a_reference, impute_gaps, evaluate_imputers,
-                     forecast_and_backtest, feed_flexparameterize, apply_to_a_flexpse_model,
-                     save_and_load_a_fitted_pipeline, write_a_backend, deploy_a_pipeline_app (M7)
+                     forecast_and_backtest, prepare_fit_data, apply_to_a_flexpse_model,
+                     save_and_load_a_fitted_pipeline, add_your_own_method, deploy_a_pipeline_app (M7)
   tutorials/         index page linking the exported marimo tutorials (D12); the notebooks live in /tutorials
   examples/          runnable scripts on flexsignal.testing.synthetic data and the vendored flex-pse biogas data
   reference/         flexsignal.core, spec, steps (generated tables), backends, pipeline, api,
@@ -577,8 +683,8 @@ M0 ─► M1 ─┬─► M2 ─┬─► M4 ─► M5 ─► M6 (1.0) ─► M7
 | M0 | 0.0.1 | Scaffold | CI, lint, import-linter and `sphinx-build -W` green on an empty package; Pages site live | — |
 | M1 | 0.1.0 | Core, spec and cleaning | A cleaning pipeline gives identical output from Python and from JSON, and catches every injected fault in the synthetic fixtures | M0 |
 | M2 | 0.2.0 | Calibrate and impute | The A/B/C/D example recovers the true A within tolerance; the imputer benchmark runs on synthetic and biogas data | M1 |
-| M3 | 0.3.0 | flex-pse bridge | Synthetic raw data → clean → `flexparameterize` fit → `apply_spec` on a model built with the latest flex-pse release (v0.3.0 today) | M1 (M2 for the full demo) |
-| M4 | 0.4.0 | Forecasting | Backtest on synthetic data with known seasonality beats a seasonal-naive baseline; the forecast reaches a model as `dispatch` | M2, M3 |
+| M3 | 0.3.0 | Hand-off to models | flex-orchestrator's alignment and fit-prep tests pass against `flexsignal.handoff`; a plain script runs raw data → clean → `to_grid` → `apply_values` → solve, and `fit_data` → a flex-pse regressor, on the latest flex-pse release (0.3.1) | M1 (M2 for the full demo) |
+| M4 | 0.4.0 | Forecasting | Backtest on synthetic data with known seasonality beats a seasonal-naive baseline; the forecast reaches a model as fixed values | M2, M3 |
 | M5 | 0.5.0 | Advanced backends | PyPOTS, Chronos, anomaly and darts/sktime adapters pass their tests, skipped when an extra is missing | M2, M4 |
 | M6 | 1.0.0 | Stable release | Orchestrator contract suite green; schema frozen at 1.0.0; published to PyPI; hand-off | M1–M5 |
 | M7 | 1.1.0 | Acquirium | A live `PipelineApp` runs on a local Acquirium server (`main`), fed synthetic data by an in-repo test driver | M6 |
@@ -652,18 +758,21 @@ Every milestone also needs, per the definition of done in §7:
 ### M2: Calibrate and impute (0.2.0)
 
 - **Scope:**
-  - The condition language: pandas `eval` syntax plus `held(...)`, `is_raw(...)` and `flagged(...)`.
+  - The condition language: Python syntax plus `held(...)`, `valid(...)`, `is_raw(...)` and `flagged(...)`,
+    evaluated by flex-signal itself (D16).
   - `calibrate` with `fit_when`/`apply_when`, `prefer_reference`, and `refit` static or rolling. Backends:
-    sklearn, statsmodels and `curve_fit`.
+    sklearn, statsmodels and `curve_fit` (D17).
   - Imputers: `kalman` (statsmodels), `regression` (lags, Fourier terms, other streams), `knn`, `iterative` and
     `tiered`.
   - `filter` (savgol, butterworth, median) and `detotalize`.
-  - `eval`: a built-in masking benchmark (random and block gaps), with pygrinder optional under `[eval]`.
+  - `eval`: a built-in masking benchmark (random and block gaps). pygrinder moves to `[pypots]` in M5 (D20).
+  - `synthetic.abcd`: the A/B/C/D fixture with known truth, optional drift, and a conditionally wrong reference.
 - **Acceptance:**
   - On a synthetic A/B/C/D fixture with known true A and intermittent B, `A_clean` RMSE is under a set threshold.
   - With `refit="rolling"`, the calibration tracks an injected drift that `static` misses.
   - The imputer benchmark report runs on synthetic data and on the flex-pse biogas data.
   - An `interpolate` pipeline reproduces flex-pse's `imputed_bio_gas_generation.csv`.
+  - The two biogas items wait on open question O1 (§9).
 - **Docs:**
   - getting_started/ten_minutes, built around the A/B/C/D example;
   - explanation pages: conditions, calibration, imputation_tiers;
@@ -673,59 +782,139 @@ Every milestone also needs, per the definition of done in §7:
     picking up from tutorial 04;
   - 06 Comparing imputers by gap length, on synthetic and biogas data.
 
-### M3: flex-pse bridge (0.3.0)
+### M3: Hand-off to models (0.3.0)
+
+Moves the data functions that flex-orchestrator and this plan both had, into flex-signal, so a plain script can
+hand data to a flex-pse model and flex-orchestrator can depend on flex-signal (D22).
+
+**Status (2026-11-15): built.** `flexsignal.handoff` and `flexsignal.integrations.flexpse` pass flex-orchestrator's
+ported tests and the end-to-end test against flex-pse 0.3.1 with HiGHS; tutorial 07 and the docs are in. To tag
+0.3.0 once merged; flex-orchestrator's switch follows in its own repo. The item-by-item inventory,
+the behaviour to preserve and flex-orchestrator's side of the migration are in `FLEX_ORCHESTRATOR_OVERLAP.md`.
 
 - **Scope:**
-  - `integrations.flexpse`: `to_grid` (duck-typed `TimeBlock`, `DatetimeIndex` or `time` dict, timezone
-    handling), `to_parameterize`, `to_elements` (`fix`/`dispatch` dicts) and `patch_spec`.
-  - CI job pinned to the latest flex-pse release by git tag (`flex-pse[parameterize] @ git+...@v0.3.0` today;
-    see D3), plus a scheduled job against flex-pse `main`.
+  - `flexsignal.handoff`: `GridOptions`, `data_window`, `to_grid` → `GridValues` (values, units, filled
+    counts, data hash, `to_overrides`); `grids_of`, `scope_of`, `targets` for several time blocks; `FitPrep`,
+    `fit_data` → `FitData`, `split_holdout`, `data_hash`.
+  - `flexsignal.eval.metrics` (RMSE, MAE, MAPE).
+  - `flexsignal.integrations.flexpse`: `time_grid` (flowsheet specs and built models, several time blocks),
+    `time_scopes`, `apply_values` (on a spec or a built model).
+  - Flag awareness: `EXCLUDED` and `NO_SAMPLE` samples aren't samples; `GridValues` reports steps resting on
+    filled or corrected values.
+  - CI job pinned to the latest flex-pse release by git tag (`flex-pse @ git+...@0.3.1` today; see D3), plus a
+    scheduled job against flex-pse `main`. import-linter adds `flexdesign` to the flex-pse-only modules.
+  - Not in scope: regressor wrappers (flex-signal stops at `X, y`), design-spec grids (stay in
+    flex-orchestrator), store selectors, studies and sweeps.
 - **Acceptance:**
-  - A component test runs synthetic raw data → clean → `to_grid` → `flexparameterize.apply_to_model` (multilinear) →
-    `flexops.apply_spec(model, to_elements(...))`, then solves with HiGHS.
-  - An off-grid or gappy input raises `FlexDataError`-style errors that name the gap.
+  - flex-orchestrator's tests listed in `FLEX_ORCHESTRATOR_OVERLAP.md` §4 pass as pure-data tests against
+    `flexsignal.handoff` / `integrations.flexpse`, with the same inputs, values, errors and data hashes.
+  - A component test runs synthetic raw data → clean → `time_grid` → `to_grid` → `apply_values` on a model built
+    with flex-pse 0.3.1, then solves with HiGHS; and `fit_data` → flex-pse's `LinearRegressor`.
+  - Gaps a rule can't fill, off-grid data and an unknown path raise errors that name the column, the steps and
+    the fix.
+  - `import flexsignal` and `import flexsignal.handoff` still import no flex-pse, pyomo or idaes.
 - **Docs:**
-  - explanation/flexpse_integration;
-  - how-to guides: feed_flexparameterize, apply_to_a_flexpse_model;
+  - explanation/flexpse_integration (the hand-off, time zones, interval rules, scopes);
+  - how-to guides: prepare_fit_data, apply_to_a_flexpse_model;
   - intersphinx links into the flex-pse docs.
-- **Tutorials:** 07 From raw data to a flex-pse model: clean, `to_grid`, a `flexparameterize` fit and
-  `apply_spec`, solved with HiGHS.
+- **Tutorials:** 07 From raw data to a flex-pse model, in a plain script: clean and calibrate, `to_grid` with a
+  facility time zone and a gap rule, `apply_values`, solve with HiGHS; then `fit_data` and a flex-pse regressor,
+  scored with `split_holdout` and `metrics`.
+- **After M3 (in flex-orchestrator):** it pins flex-signal 0.3.0 and replaces its own copies, following
+  `FLEX_ORCHESTRATOR_OVERLAP.md` §5. That work is tracked in flex-orchestrator, not here.
 
 ### M4: Forecasting (0.4.0)
 
+**Status (2026-11-16): built.** The four forecast steps, `fs.backtest`, the docs and tutorial 08 are in. The
+backtest acceptance test passes on synthetic data, and a forecast is fixed into a flex-pse 0.3.1 model and solved
+with HiGHS. The biogas report waits on O1; the `[ml]` and `[nixtla]` adapters on O2.
+
+A forecast is a prediction of a stream's future values. It is written into the frame's future rows, flagged
+`FORECAST`, and reaches a flex-pse model the same way measured data does: `handoff.to_grid`, then `apply_values`
+fixes the model's variables to it (D24). Only libraries that support pandas 3 are used (D23).
+
 - **Scope:**
-  - The `forecast` step with past and future exogenous inputs, `issue_time`, quantiles and the `FORECAST` flag.
-  - Backends: statsmodels (core), skforecast (`[ml]`) and statsforecast/mlforecast (`[nixtla]`).
-  - `backtest` with blocked, time-ordered folds; `api.backtest`.
-  - Seasonal-naive and persistence baselines (core).
+  - `flexsignal.steps.forecast` (`fs.forecast`), steps that share these fields (D25):
+    - `streams` (the targets), `horizon`, and `issue_time`: the time the forecast is made from. By default it is
+      the last time any target has a value. Target values after it are ignored, and the rows from it to
+      `issue_time + horizon` are written, extending the index on the data's step if needed.
+    - `exog`: streams known ahead, such as a price schedule or a weather forecast. Their values after
+      `issue_time` are rows of the input; a missing one is an error naming the stream and the step.
+    - `quantiles`, e.g. `[0.1, 0.9]`, written as `<stream>__q10` and `<stream>__q90` columns.
+    - The target's metadata records `issue_time`; the forecast rows are flagged `FORECAST`.
+  - Methods:
+    - `persistence` and `seasonal_naive`: the baselines, in core;
+    - `structural`: statsmodels' `UnobservedComponents` (level or trend, seasonal cycles, an AR term, `exog`).
+      `fit` estimates its parameters and stores them as JSON; `transform` filters the new history with them;
+    - `regression`: a linear model (the `LINEAR_MODELS` keys) of Fourier cycles, `exog`, the target's own lags
+      (forecast step by step) and other streams' lags no shorter than the horizon.
+  - Intervals: from the model's forecast variance (`structural`), or from the training residuals, widened with
+    lead time where the method defines it (baselines). `regression`'s intervals don't widen with lead time; the
+    docs say so.
+  - `fs.backtest(spec, data, folds=..., every=..., train=..., compare=[...])` in `flexsignal.eval`: blocked,
+    time-ordered folds ending at the end of the data, each issued `every` apart (default: the horizon). For each
+    fold, every stream except `exog` is hidden after the issue time, the whole pipeline is fitted and run, and
+    the forecast is scored against the input data. `compare` swaps other forecast steps (the baselines, say)
+    into the same pipeline, so cleaning is shared. The result has a scores table per method and fold, a summary
+    with skill against a chosen baseline, the forecasts themselves, and `to_dict()`.
+  - `GridValues.estimated` also counts steps resting on forecast values.
+  - Not in scope (moved): skforecast (`[ml]`) and statsforecast/mlforecast (`[nixtla]`), which require
+    `pandas<3` (O2); SARIMAX (`structural`'s AR term and `exog` cover dynamic regression); `dispatch` elements
+    (D24).
 - **Acceptance:**
-  - On synthetic data with known seasonality, backtest metrics beat seasonal-naive for at least one backend. They
-    are also reported on the biogas data.
-  - A forecast becomes `dispatch` elements on a flex-pse model's grid.
-  - Forecasts are deterministic with fixed seeds.
-- **Docs:** explanation/forecasting_and_backtesting and how_to/forecast_and_backtest.
-- **Tutorials:** 08 Forecasting and backtesting against a seasonal-naive baseline, and feeding the forecast to a
-  model as `dispatch`.
+  - On synthetic data with known daily and weekly cycles, `structural` and `regression` beat `seasonal_naive` in a
+    backtest. The biogas report waits on O1.
+  - A forecast reaches a flex-pse model as fixed values: `to_grid` → `apply_values` → solve with HiGHS.
+  - Forecasts and backtests are identical across runs (no randomness, or fixed seeds).
+  - `load_spec(dump_spec(s)) == s` and Python/JSON parity for every forecast step; fitted state is JSON.
+  - Leakage: a backtest's forecast doesn't change when the data after the issue time changes, except `exog`.
+- **Docs:** explanation/forecasting_and_backtesting; how_to/forecast_and_backtest; the forecast steps in the
+  reference.
+- **Tutorials:** 08 Forecasting and backtesting: the baselines, `structural` and `regression` on a plant with
+  daily and weekly cycles, a backtest against seasonal-naive, intervals, and the forecast fixed into a flex-pse
+  model.
 
 ### M5: Advanced backends (0.5.0)
+
+**Status (2026-11-17): built.** The extension API, `[units]`, and nine adapters registered through it:
+`PyodDetector`, `RupturesChangepoint`, `StumpyDiscord` (`[anomaly]`), `PypotsImpute`, `PypotsForecast`
+(`[pypots]`), `ChronosForecast` (`[foundation]`), `T0Forecast` (`[t0]`), `NeuralforecastForecast` (`[deep]`), `DartsForecast` and
+`SktimeForecast`. Every acceptance item passes except the biogas half of the SAITS benchmark, which waits on O1.
+Adapters train on the data they are given and store nothing (D26). Tutorials 09 and 10 run live (about 40 s and
+20 s), so no precomputed results are committed.
 
 - **Scope:**
   - `[pypots]`: a windowing adapter (DataFrame ↔ `{"X": [n, T, F]}` with the index restored) and SAITS, BRITS,
     CSDI and TimesNet for imputation and forecasting.
-  - `[foundation]`: Chronos-2 by default, with a TimesFM-3 licence guard.
+  - `[foundation]`: Chronos-2 by default; `[t0]`: t0-alpha. Open weights only (D29).
   - `[deep]`: neuralforecast.
   - `[anomaly]`: pyod `detector`, ruptures `changepoint`, stumpy.
   - `[darts]` and `[sktime]` adapters.
   - `[units]`: pint conversion at the boundary.
+  - The extension API (§3.8, D21): `register_cleaner`, `register_imputer`, `register_forecaster`,
+    `register_model`, options generated from the function signature, `fs.load_plugins` / `plugins=`, the
+    `requires` hint, provenance records naming the function, and the adapters above registered through it.
 - **Acceptance:**
   - Each adapter has a test that is skipped cleanly when its extra is missing, and a CI matrix job installs
     `[all]`.
+  - A cleaner, an imputer, a forecaster and a model registered from a test module run from a JSON spec with
+    output identical to the same steps built in Python, and save, load and transform as fitted pipelines.
+  - Loading a spec that names an unregistered method fails with the "register it first" error; a spec can't make
+    flex-signal import a module (contract test, alongside the D15 condition checks).
+  - Invalid options to a registered method fail on load with the field named.
   - The PyPOTS windowing round trip preserves the index.
   - The benchmark compares SAITS with the `tiered` imputer on synthetic and biogas data.
-- **Docs:** how_to/write_a_backend and the generated backend table, with the extra for every backend.
-- **Tutorials:** 09 Deep imputation and forecasting with PyPOTS and Chronos, compared with the core methods. If
-  training is too slow for CI, the tutorial loads committed, precomputed results, and a test checks that they
-  still reproduce.
+- **Docs:** explanation/extending (the "only registered methods run" rule), how_to/add_your_own_method, and
+  the generated backend table, with the extra for every backend. The step and backend tables list registered
+  methods too, marked as such.
+- **Tutorials:**
+  - 09 Deep imputation and forecasting with PyPOTS and Chronos, compared with the core methods. If training is
+    too slow for CI, the tutorial loads committed, precomputed results, and a test checks that they still
+    reproduce.
+  - 10 Your own methods: register a cleaner, an imputer and a model; use them from Python and from a JSON spec;
+    score them against the injected faults and a built-in method; save and reload the fitted pipeline; see what
+    is refused (an unregistered kind, bad options); and package the methods so `pip install` makes them
+    available.
 
 ### M6: Stable release (1.0.0)
 
@@ -741,7 +930,7 @@ Every milestone also needs, per the definition of done in §7:
   - `pip install flex-signal` from PyPI works.
   - flex-orchestrator maintainers sign off that the API is enough for their wrapper.
 - **Docs:** explanation/orchestrator_contract, a migration guide, and a complete reference.
-- **Tutorials:** 10 A cleaning spec as a flex-orchestrator study: the run/fit contract, payloads, and migrating
+- **Tutorials:** 11 A cleaning spec as a flex-orchestrator study: the run/fit contract, payloads, and migrating
   an old spec. Revisit browser-run tutorials (§7), now that flex-signal is on PyPI.
 
 ### M7: Acquirium (1.1.0)
@@ -757,7 +946,7 @@ Every milestone also needs, per the definition of done in §7:
   - A forecast run is stored and read back.
   - Redeploying with new parameters doesn't trigger a digest mismatch.
 - **Docs:** explanation/acquirium_integration and how_to/deploy_a_pipeline_app.
-- **Tutorials:** 11 A live Acquirium soft sensor: a `PipelineApp` that cleans a stream and stores a forecast,
+- **Tutorials:** 12 A live Acquirium soft sensor: a `PipelineApp` that cleans a stream and stores a forecast,
   run on the in-repo test driver.
 
 ### Test data
@@ -795,7 +984,7 @@ can run any pipeline on their own data, but none of it is shipped here.
 |---|---|
 | D1 | **flex-pse imports flex-signal, never the reverse at import time.** Core has no flex-pse dependency. We mirror the flexcore conventions (exceptions, `_StrictModel`, `SourceRef`, `Quantity`) rather than import them. The only direct contact points are the duck-typed `TimeBlock` grid and handing data to flexparameterize (§4.1). Enforced by import-linter |
 | D2 | **Calibrate A to a trusted, intermittent reference B.** `calibrate` fits A→B where B is valid and `fit_when` holds, uses B directly where it is available (`prefer_reference`), and optionally refits on a rolling window to follow drift (§3.5) |
-| D3 | **Always track the latest flex-pse release** (v0.3.0 as of 2026-11-09, the same pin as flex-orchestrator). Each new flex-pse release bumps the pin, the tests and the docs in the same PR. A scheduled job tests against flex-pse `main` to catch breakage early. ARIMA-specific helpers wait for a release that ships ARIMA |
+| D3 | **Always track the latest flex-pse release** (0.3.1 as of 2026-11-15, tag `0.3.1`, the same pin as flex-orchestrator). Each new flex-pse release bumps the pin, the tests and the docs in the same PR. A scheduled job tests against flex-pse `main` to catch breakage early. ARIMA-specific helpers wait for a release that ships ARIMA |
 | D4 | **Import name `flexsignal`**, matching flex-pse. flex-orchestrator will adopt the same naming |
 | D5 | **pandas internally**; polars only at the Acquirium boundary |
 | D6 | **No orchestrator plugin in flex-signal.** flex-orchestrator will write a direct wrapper once flex-signal is stable. flex-signal guarantees an orchestrator-ready API (§4.3), verified by contract tests |
@@ -808,7 +997,26 @@ can run any pipeline on their own data, but none of it is shipped here.
 | D13 | **Rows added by joining inputs are flagged `NO_SAMPLE`** (2026-11-10), together with `MISSING`, and `align`, `resample` and `interpolate` skip them. Found while building tutorial 04: without the flag, an off-grid source aligned to the join's padding and came out all NaN (§3.2) |
 | D14 | **Naive timestamps are taken as the machine's local time, with a warning** (2026-11-10), instead of being refused. flex-pse work usually runs on a "local system" at, or set up for, one plant, and rarely mixes time zones, so refusing was friction without benefit. The zone comes from `tzlocal` (an IANA name, so daylight saving is handled), and `TZ` overrides it. `NaiveTimestampWarning` says which zone was assumed; `timezone=` silences it. Timestamps written in a spec still mean UTC, so a spec means the same on every machine. Daylight-saving gaps and repeats in naive data are still errors |
 | D15 | **Conditions are checked against an allowlist before they are evaluated** (2026-11-10). `pandas.eval` let a condition reach Python internals through attribute access (`flow.__class__.__init__.__globals__`) and call methods (`flow.abs()`), so a shared spec could run code. `check_condition` parses each condition with `ast` and accepts only stream names, numbers, arithmetic, comparisons, boolean operators and the functions in `CONDITION_FUNCTIONS`, with exponents of at most 100. It runs when a spec is loaded and again before evaluation. File paths in specs remain a trust issue (docs: spec_schema) |
+| D16 | **flex-signal evaluates conditions itself** (M2, 2026-11-11). The parsed, allowlisted tree is evaluated with numpy instead of being handed to `pandas.eval`. This removes the dependency on `pandas.eval`, lets helpers like `held()` read the time index and the flags, and lets conditions be type-checked when a spec loads. `&` and `|` keep `pandas.eval`'s low precedence, and every comparison with a missing value is False, `!=` included |
+| D17 | **Spec models are allowlisted keys, and fitted models are coefficients** (M2). `calibrate` and `regression` accept only registered linear-model keys (sklearn, statsmodels) or `scipy:curve_fit` with a checked formula, never a `"pkg.mod:Class"` path, so loading a spec never imports code. Every accepted model is linear in its coefficients, or a formula, so the fitted state is plain JSON numbers and applying it needs only numpy. Non-linear learned models (GBM and others) wait for a safe binary format such as skops |
+| D18 | **New flag `FILTERED`** (M2) for values a smoothing filter rewrote, so `is_raw()` and downstream users can tell them from readings. It is bit 14, which leaves one bit (15) free |
+| D19 | **`knn` and `iterative` are fitted on the data they fill** (M2). scikit-learn's fitted imputers can't be stored as JSON, so these two learn at transform time and store nothing at fit. `regression` and `kalman` are the fitted alternatives |
+| D20 | **The imputer benchmark is built in, without pygrinder** (M2). Hiding block and random gaps takes a few lines. pygrinder's richer missing-data patterns come with `[pypots]` in M5, so there is no `[eval]` extra |
+| D21 | **Users add methods by registering them; only registered methods run** (2026-11-15). Custom cleaners, imputers, forecasters and models are registered in code (`fs.register_imputer("CustomMethod", fn)`, an installed package's entry point, or `plugins=` named by the caller) before a spec loads, and a spec refers to them by name. Specs never name import paths, so a spec from someone else can run only what the person running it chose to register. The function's signature defines the step's validated options, and flex-signal does the bookkeeping (gaps, flags, provenance). Replaces the `"pkg.mod:fn"` derive step and the idea of letting specs name classes (§3.8, M5) |
+| D22 | **flex-signal owns handing data to models; flex-orchestrator depends on flex-signal** (2026-11-15). flex-orchestrator already lined stored data up with model time steps, built `fix` elements and prepared fit data, which overlapped M3's plan. Everything must also work in a plain script, so those data functions move to `flexsignal.handoff` and `flexsignal.integrations.flexpse` with their tests and behaviour unchanged, and flex-orchestrator calls them. flex-signal stops at a prepared `X, y`: regressor wrappers stay in flex-orchestrator for sweeps and automated fits. Design-spec grids, store selectors, studies, sweeps and Ray stay in flex-orchestrator. Inventory and migration plan: `FLEX_ORCHESTRATOR_OVERLAP.md`. Replaces M3's `to_grid` / `to_parameterize` / `to_elements` / `patch_spec` plan |
+| D23 | **Only libraries that support pandas 3** (M4, 2026-11-16). flex-signal and flex-pse both require `pandas>=3`. skforecast 0.27, statsforecast 2.1 and mlforecast 1.1 require `pandas<3`, so installing them would downgrade pandas under flex-pse. Their extras (`[ml]`, `[nixtla]`) wait until they support pandas 3 (O2). M4's forecasters use statsmodels, scikit-learn and scipy, which are core dependencies already |
+| D24 | **A forecast reaches a model as fixed values, not `dispatch`** (M4, 2026-11-16). A forecast is a prediction, so it fixes model variables like measured data does, through `to_grid` and `apply_values`. flex-pse's `dispatch` element is for setpoints an external controller sends (and has no units), which is not flex-signal's job |
+| D25 | **A forecast step writes the frame's future rows** (M4, 2026-11-16). Forecasting is a step like any other, so it runs from a JSON spec after cleaning. Values known ahead (`exog`) are simply rows after the issue time in the input. A backtest hides everything except `exog` after each issue time, so a forecast can't see the future it is scored on |
+| D26 | **Adapters to learned models train on the data they are given and store nothing** (M5, 2026-11-17). Trained weights and fitted library objects (PyPOTS and neuralforecast networks, pyod detectors, darts and sktime models) can't be JSON, and D9 keeps fitted state JSON. So, as with `knn` and `iterative` (D19), they are trained inside `transform`, with fixed seeds on CPU, and a fitted pipeline stores nothing for them. A backtest refits every fold anyway. Pretrained foundation models are named by Hugging Face id and a pinned revision, so they are reproducible without stored state. A safe binary format for weights can come later |
+| D27 | **A registered method's name is its kind; flex-signal's adapters prefix theirs with the library** (M5, 2026-11-17). One name, e.g. `PyodDetector`, is the JSON `kind` and `fs.clean.PyodDetector`, so registered methods read differently from built-in kinds (`hampel`) and are marked "registered" in the step table. A name can't shadow a built-in step; registering the same function again (a re-run notebook cell) replaces it. The JSON Schema lists flex-signal's own steps, adapters included, but not users' |
+| D28 | **Units are converted only where asked** (M5, 2026-11-17). Values stay plain float64 with units as metadata (§3.2). pint is imported only by a `convert_units` step or a `range` bound in other units; offset units (degC, K) convert correctly. flex-pse converts the values it is given itself, so the hand-off doesn't convert |
+| D29 | **Adapters only to models with open weights** (M5, 2026-11-18). flex-signal ships adapters only to models whose weights are free for commercial use (Apache-2.0: Chronos-2, TimesFM 2.5, t0-alpha). Models under non-commercial or revenue-capped licences (TimesFM-3, Mistral's Timestral) get no adapter and no licence switch: users who may use them register their own forecaster (§3.8). This replaces the TimesFM-3 `accept_licence` guard |
+| D30 | **Adapters don't block a library's untested models** (M5, 2026-11-18). An adapter's model option takes any model class of its library by bare name: the tested ones (listed in the docs) run with flex-signal's simple settings, any other with its own settings in `params`, and a missing required setting is named in the error. The name is looked up only among that library's model classes (a subclass of its base model), and the bare-identifier pattern keeps import paths out of specs (D21). Untested models aren't in CI; licences of weights they download are the user's to check (D29) |
 
 ### Open
 
-None at the moment. New questions will be added here as they come up during implementation.
+| # | Question |
+|---|---|
+| O1 | **The biogas test data** (2026-11-11). The plan assumed the data ships in a flex-pse release. It doesn't yet: `bio_gas_generation.csv` and `imputed_bio_gas_generation.csv` arrived on flex-pse `main` in "Arima integration (#102)" on 2026-11-10, after the latest release tag. Their upstream source, MuneebX00/Biogas-Time-Series-ML-Engine, still needs its licence confirmed before we vendor them. Until both are settled, M2's two biogas acceptance items and tutorial 06's biogas section are pending; everything else in M2 runs on synthetic data |
+| O2 | **Forecasting libraries that require pandas 2** (2026-11-16). skforecast, statsforecast and mlforecast require `pandas<3` (D23). Revisit when they support pandas 3, then add the `[ml]` and `[nixtla]` adapters. Until then, the extension API (§3.8) lets a user register a forecaster of their own |
+| O3 | **Small gaps left in the extension API** (M5, 2026-11-17). (a) A registered forecaster isn't told which quantiles were requested, so the PyPOTS, darts and sktime adapters refuse unavailable quantiles through the order in which flex-signal reads their result; passing `quantiles` to functions that declare it would be cleaner. (b) Library `params` dicts are checked when the step runs, not when the spec loads, because checking them needs the library. (c) The TimesFM 2.5 run path is written but untested: `timesfm` isn't installed in CI. (d) pygrinder's missing-data patterns aren't in `benchmark_imputers` yet |

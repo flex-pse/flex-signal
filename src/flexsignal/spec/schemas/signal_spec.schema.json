@@ -69,6 +69,292 @@
       "title": "Align",
       "type": "object"
     },
+    "Calibrate": {
+      "additionalProperties": false,
+      "description": "Correct a stream against an intermittent, trusted reference.\n\n1. **Fit.** On the *trusted rows*, the rows where the reference has a value\n   and ``fit_when`` holds, fit a model that maps the ``features`` (by default\n   the target itself) to the reference.\n2. **Apply.** Predict the corrected value wherever ``apply_when`` holds and\n   the features have values. These values are flagged ``CORRECTED``, on top\n   of the target's own flags. Where ``apply_when`` is false, the target's\n   value passes through unchanged.\n3. **Prefer the reference.** With ``prefer_reference``, the trusted rows take\n   the reference's own value and flags instead of a prediction.\n4. **Follow drift.** With ``refit={\"rolling\": \"1D\"}``, the model is refitted\n   for each block of time on the trusted rows of the window ending with that\n   block. The model fitted on the training data covers blocks whose window\n   has too few trusted rows.\n\nThe fitted state holds the coefficients (or the formula's parameters) and fit\nmetrics: rows used, RMSE and R\u00b2.\n\nModels (``model``): the linear models of\n:data:`~flexsignal.backends.models.LINEAR_MODELS`, e.g.\n``sklearn:HuberRegressor``, or ``scipy:curve_fit`` with a ``formula`` such as\n``\"a + b * A + c * A ** 2\"`` and ``initial`` values for its parameters.\n\nWith ``mode=\"residual\"`` the model predicts the error, ``reference - target``,\nand the corrected value is ``target + prediction``. Use it when the features\nexplain the error rather than the value, e.g. a temperature that biases A.",
+      "properties": {
+        "apply_when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where to correct the target (default: everywhere). Elsewhere the target's value passes through unchanged.",
+          "title": "Apply When"
+        },
+        "features": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Model inputs (default: the target). Not used with scipy:curve_fit, whose formula names its inputs.",
+          "title": "Features"
+        },
+        "fit_when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the reference can be trusted, e.g. 'C == 0 and D == 0 and B > 0'. Default: wherever it has a value.",
+          "title": "Fit When"
+        },
+        "formula": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "For scipy:curve_fit: the model as a formula of streams and parameters, e.g. 'a + b * A'.",
+          "title": "Formula"
+        },
+        "initial": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "For scipy:curve_fit: a starting value for each parameter in the formula, e.g. {a: 0, b: 1}.",
+          "title": "Initial",
+          "type": "object"
+        },
+        "kind": {
+          "const": "calibrate",
+          "default": "calibrate",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mode": {
+          "default": "map",
+          "description": "map: predict the reference value; residual: predict reference - target and add it to the target.",
+          "enum": [
+            "map",
+            "residual"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "model": {
+          "default": "sklearn:LinearRegression",
+          "description": "The model: a linear model key such as sklearn:HuberRegressor or statsmodels:RLM, or scipy:curve_fit with a formula.",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of the corrected stream (default: <target>_clean). Set it to the target's name to replace the target.",
+          "title": "Output"
+        },
+        "params": {
+          "additionalProperties": true,
+          "description": "Keyword arguments for the model, e.g. {alpha: 1.0} for Ridge.",
+          "title": "Params",
+          "type": "object"
+        },
+        "prefer_reference": {
+          "default": true,
+          "description": "Use the reference's own value on the rows where it is trusted.",
+          "title": "Prefer Reference",
+          "type": "boolean"
+        },
+        "reference": {
+          "description": "The trusted stream measuring the same quantity, e.g. B.",
+          "title": "Reference",
+          "type": "string"
+        },
+        "refit": {
+          "anyOf": [
+            {
+              "const": "static",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/RollingRefit"
+            }
+          ],
+          "default": "static",
+          "description": "static: one model fitted on the training data; or {rolling: 1D} to refit on a moving window and follow drift.",
+          "title": "Refit"
+        },
+        "target": {
+          "description": "The stream to correct, e.g. A.",
+          "title": "Target",
+          "type": "string"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Units of the output (default: the target's units).",
+          "title": "Units"
+        }
+      },
+      "required": [
+        "target",
+        "reference"
+      ],
+      "title": "Calibrate",
+      "type": "object"
+    },
+    "ChronosForecast": {
+      "additionalProperties": false,
+      "description": "Forecast with a pretrained foundation model, zero-shot (no training).\n\nA registered forecaster: ``flexsignal.adapters.foundation.chronos_forecast``.",
+      "properties": {
+        "context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How much history the model reads, as a duration (e.g. ``14D``). Default: all of it, up to the model's limit (8192 steps for Chronos-2).",
+          "title": "Context"
+        },
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "ChronosForecast",
+          "default": "ChronosForecast",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model": {
+          "default": "amazon/chronos-2",
+          "description": "The pretrained model, by Hugging Face id: ``amazon/chronos-2`` (default, Apache-2.0), ``autogluon/chronos-2-small`` (smaller and faster, Apache-2.0) or ``google/timesfm-2.5-200m-pytorch`` (Apache-2.0, needs ``pip install timesfm``, no exog).",
+          "enum": [
+            "amazon/chronos-2",
+            "autogluon/chronos-2-small",
+            "google/timesfm-2.5-200m-pytorch"
+          ],
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The model's Hugging Face commit. Default: the commit this version of flex-signal pins for the model, so results don't change when the model is updated upstream.",
+          "title": "Revision"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "ChronosForecast",
+      "type": "object"
+    },
     "Combine": {
       "additionalProperties": false,
       "description": "Build a new stream from several, e.g. two redundant meters.\n\nThe result is flagged ``DERIVED``. For ``coalesce``, each sample takes the\nfirst stream (in order) that has a value, along with that stream's flags. For\nthe other methods, the result's flags are the OR of every input's flags.",
@@ -138,6 +424,51 @@
         "streams"
       ],
       "title": "Combine",
+      "type": "object"
+    },
+    "ConvertUnits": {
+      "additionalProperties": false,
+      "description": "Convert streams to other units, e.g. a meter's gpm to the model's m^3/hr.\n\nValues are rescaled exactly (offset units such as degC and K too), the\nstream's units are updated, and the flags are unchanged. Needs pint (the\n``[units]`` extra).",
+      "properties": {
+        "kind": {
+          "const": "convert_units",
+          "default": "convert_units",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "to": {
+          "description": "The units wanted, e.g. m^3/hr.",
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "streams",
+        "to"
+      ],
+      "title": "ConvertUnits",
       "type": "object"
     },
     "CsvInput": {
@@ -223,6 +554,201 @@
       "title": "CsvOutput",
       "type": "object"
     },
+    "DartsForecast": {
+      "additionalProperties": false,
+      "description": "Forecast with a darts model, fitted on the history each time it runs.\n\nA registered forecaster: ``flexsignal.adapters.darts.darts_forecast``.",
+      "properties": {
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "DartsForecast",
+          "default": "DartsForecast",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model": {
+          "default": "ExponentialSmoothing",
+          "description": "The darts model, by class name. Tested: ExponentialSmoothing, Theta, FourTheta, ARIMA, KalmanForecaster, LinearRegressionModel, NaiveSeasonal, NaiveDrift, NaiveMean and FFT. Any other darts forecasting model, e.g. AutoARIMA or NHiTSModel, runs too, untested: its own arguments go in params.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "num_samples": {
+          "default": 500,
+          "description": "How many sampled forecasts the quantiles are taken from, between 10 and 10000.",
+          "title": "Num Samples",
+          "type": "integer"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Arguments for the darts model's constructor, e.g. {\"trend\": null} for ExponentialSmoothing or {\"p\": 2, \"q\": 1} for ARIMA. They override the ones flex-signal derives from season.",
+          "title": "Params"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "season": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "1D",
+          "description": "The signal's cycle, e.g. 1D for a daily cycle, or null for none. It sets seasonal_periods (ExponentialSmoothing), seasonality_period (Theta, FourTheta), seasonal_order (1, 1, 1, m) (ARIMA, which also defaults to p=1, d=0, q=0), lags (LinearRegressionModel) or K (NaiveSeasonal). Other models don't use it.",
+          "title": "Season"
+        },
+        "seed": {
+          "default": 0,
+          "description": "Seeds the sampling, so a run repeats exactly.",
+          "title": "Seed",
+          "type": "integer"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "DartsForecast",
+      "type": "object"
+    },
+    "Detotalize": {
+      "additionalProperties": false,
+      "description": "Turn a running total (a totalizer or counter) into a rate.\n\nEach valid sample gets the increase since the previous valid sample, divided\nby the time between them, per ``per``: a total in m^3 with ``per=\"1h\"`` gives\nm^3/hr. The rate is stamped at the end of its interval, and carries the flags\nof both samples. The first valid sample has no rate and is flagged\n``MISSING``.\n\nA counter that wraps around at ``rollover`` (e.g. 999999) is unwrapped. A\ntotal that drops with no ``rollover`` set was reset; the rate across the\nreset is unknown, so it is left missing and flagged ``OUT_OF_RANGE``.",
+      "properties": {
+        "kind": {
+          "const": "detotalize",
+          "default": "detotalize",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "per": {
+          "default": "1h",
+          "description": "Time unit of the rate, e.g. 1h.",
+          "title": "Per",
+          "type": "string"
+        },
+        "rollover": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value at which the counter wraps back to 0.",
+          "title": "Rollover"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Units of the rate, e.g. m^3/hr (default: unchanged).",
+          "title": "Units"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "Detotalize",
+      "type": "object"
+    },
     "Expression": {
       "additionalProperties": false,
       "description": "Reject values wherever a user-written condition holds.\n\nFor example ``invalid_when=\"pressure < 0 or pump_on == 0\"``. Flags the\nrejected values with ``flag``, ``MANUAL`` by default.",
@@ -279,6 +805,122 @@
         "invalid_when"
       ],
       "title": "Expression",
+      "type": "object"
+    },
+    "Filter": {
+      "additionalProperties": false,
+      "description": "Smooth noise out of a stream.\n\n- ``savgol``: a Savitzky-Golay filter (:func:`scipy.signal.savgol_filter`)\n  fits a polynomial of degree ``polyorder`` across a moving ``window``. It\n  keeps peaks better than a moving average.\n- ``butterworth``: a low-pass Butterworth filter of ``order``, run forwards\n  and backwards so it adds no delay (:func:`scipy.signal.sosfiltfilt`). It\n  removes variation faster than ``cutoff``, a period such as 30min.\n- ``median``: a centred moving median over ``window``. It removes spikes as\n  well as noise, but flattens sharp peaks.\n\nEvery smoothed value is flagged ``FILTERED``. Missing values stay missing.\n``savgol`` and ``butterworth`` need a regular index and filter each unbroken\nrun of values separately; a run too short for the filter is left as it is.",
+      "properties": {
+        "cutoff": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "butterworth: the shortest period of variation to keep, e.g. 1h.",
+          "title": "Cutoff"
+        },
+        "kind": {
+          "const": "filter",
+          "default": "filter",
+          "title": "Kind",
+          "type": "string"
+        },
+        "method": {
+          "description": "savgol, butterworth or median.",
+          "enum": [
+            "savgol",
+            "butterworth",
+            "median"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "order": {
+          "default": 4,
+          "description": "butterworth: filter order.",
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Order",
+          "type": "integer"
+        },
+        "polyorder": {
+          "default": 2,
+          "description": "savgol: degree of the fitted polynomial.",
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Polyorder",
+          "type": "integer"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "savgol and median: width of the moving window, e.g. 30min.",
+          "title": "Window"
+        }
+      },
+      "required": [
+        "streams",
+        "method"
+      ],
+      "title": "Filter",
+      "type": "object"
+    },
+    "FourierTerm": {
+      "additionalProperties": false,
+      "description": "A daily, weekly or other cycle, as sine and cosine inputs to a model.",
+      "properties": {
+        "harmonics": {
+          "default": 3,
+          "description": "How many sine/cosine pairs to use.",
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Harmonics",
+          "type": "integer"
+        },
+        "period": {
+          "description": "Length of one cycle, e.g. 1D or 7D.",
+          "title": "Period",
+          "type": "string"
+        }
+      },
+      "required": [
+        "period"
+      ],
+      "title": "FourierTerm",
       "type": "object"
     },
     "FrameInput": {
@@ -382,9 +1024,44 @@
       "title": "Hampel",
       "type": "object"
     },
+    "ImputeTier": {
+      "additionalProperties": false,
+      "description": "One tier of a ``tiered`` imputer: a method for gaps up to a length.",
+      "properties": {
+        "max_gap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Longest gap this tier fills, e.g. 15min. null on the last tier means every gap left.",
+          "title": "Max Gap"
+        },
+        "method": {
+          "description": "interpolate, kalman, regression, knn, iterative, or the name of a registered imputer.",
+          "title": "Method",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": true,
+          "description": "The method's other options, e.g. {method: pchip}.",
+          "title": "Options",
+          "type": "object"
+        }
+      },
+      "required": [
+        "max_gap",
+        "method"
+      ],
+      "title": "ImputeTier",
+      "type": "object"
+    },
     "Interpolate": {
       "additionalProperties": false,
-      "description": "Fill short interior gaps by interpolating between the valid values either side.\n\nA gap is a run of missing values. Its length is the time between the valid\nsample before it and the valid sample after it. Only gaps no longer than\n``max_gap`` are filled: on 5-minute data, ``max_gap=\"15min\"`` fills up to two\nmissing samples in a row. Gaps at the start or end of the data, and values\nflagged ``EXCLUDED`` or ``NO_SAMPLE``, are never filled. Filled values keep\nthe flags that explain why they were missing, and gain ``IMPUTED_SHORT``.\n\nMethods use numpy and scipy:\n\n- ``linear``: :func:`numpy.interp`;\n- ``nearest`` and ``previous``: :class:`scipy.interpolate.interp1d`;\n- ``pchip``: :class:`scipy.interpolate.PchipInterpolator`, shape-preserving\n  with no overshoot;\n- ``akima``: :class:`scipy.interpolate.Akima1DInterpolator`.",
+      "description": "Fill short interior gaps by interpolating between the valid values either side.\n\nOnly gaps no longer than ``max_gap`` are filled: on 5-minute data,\n``max_gap=\"15min\"`` fills up to two missing samples in a row. Gaps at the\nstart or end of the data are never filled. Filled values gain\n``IMPUTED_SHORT``.\n\nMethods use numpy and scipy:\n\n- ``linear``: :func:`numpy.interp`;\n- ``nearest`` and ``previous``: :class:`scipy.interpolate.interp1d`;\n- ``pchip``: :class:`scipy.interpolate.PchipInterpolator`, shape-preserving\n  with no overshoot;\n- ``akima``: :class:`scipy.interpolate.Akima1DInterpolator`.",
       "properties": {
         "kind": {
           "const": "interpolate",
@@ -438,6 +1115,224 @@
         "max_gap"
       ],
       "title": "Interpolate",
+      "type": "object"
+    },
+    "Iterative": {
+      "additionalProperties": false,
+      "description": "Fill each stream from a model of the others, round-robin (MICE-style).\n\nUses :class:`sklearn.impute.IterativeImputer` with its default Bayesian\nridge model, on the ``streams`` and ``features`` scaled to unit variance. It\nlearns from the data it fills, so ``fit`` stores nothing; the random state is\nfixed, so results are repeatable. Filled values gain ``IMPUTED_MODEL``.",
+      "properties": {
+        "features": {
+          "default": [],
+          "description": "Other streams that help find similar rows; they are used, not filled.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "kind": {
+          "const": "iterative",
+          "default": "iterative",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_gap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Longest gap to fill, measured between the valid samples either side, e.g. 6h. Default: every gap, including those at the start and end.",
+          "title": "Max Gap"
+        },
+        "max_iter": {
+          "default": 10,
+          "description": "Rounds of modelling.",
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Iter",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "Iterative",
+      "type": "object"
+    },
+    "KNN": {
+      "additionalProperties": false,
+      "description": "Fill a value from the rows whose other streams are most similar.\n\nUses :class:`sklearn.impute.KNNImputer` on the ``streams`` and ``features``,\neach scaled to unit variance first so units don't decide the distance. It\nlearns from the data it fills, so ``fit`` stores nothing. Filled values gain\n``IMPUTED_MODEL``. A row needs at least one other stream with a value.",
+      "properties": {
+        "features": {
+          "default": [],
+          "description": "Other streams that help find similar rows; they are used, not filled.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "kind": {
+          "const": "knn",
+          "default": "knn",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_gap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Longest gap to fill, measured between the valid samples either side, e.g. 6h. Default: every gap, including those at the start and end.",
+          "title": "Max Gap"
+        },
+        "n_neighbors": {
+          "default": 5,
+          "description": "How many similar rows to use.",
+          "minimum": 1,
+          "title": "N Neighbors",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "weights": {
+          "default": "uniform",
+          "description": "uniform: plain mean; distance: closer rows count more.",
+          "enum": [
+            "uniform",
+            "distance"
+          ],
+          "title": "Weights",
+          "type": "string"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "KNN",
+      "type": "object"
+    },
+    "Kalman": {
+      "additionalProperties": false,
+      "description": "Fill gaps with the Kalman smoother of a structural time-series model.\n\nEach stream is modelled as a level (``local_level``), or a level with a slope\n(``local_linear_trend``), plus optional ``seasonal`` cycles and noise, using\n:class:`statsmodels.tsa.statespace.structural.UnobservedComponents`. ``fit``\nestimates the model's variances on the training data by maximum likelihood\nand stores them as JSON. ``transform`` runs the Kalman smoother with those\nvalues, which estimates every missing value from the data on both sides of\nit. Filled values gain ``IMPUTED_MODEL``.\n\nIt needs a regular time index; run ``align`` or ``resample`` first. A long\ngap relaxes towards the level and cycles, so set ``seasonal`` when the\nstream has a daily pattern.",
+      "properties": {
+        "kind": {
+          "const": "kalman",
+          "default": "kalman",
+          "title": "Kind",
+          "type": "string"
+        },
+        "level": {
+          "default": "local_level",
+          "description": "How the underlying level moves.",
+          "enum": [
+            "local_level",
+            "local_linear_trend"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "max_gap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Longest gap to fill, measured between the valid samples either side, e.g. 6h. Default: every gap, including those at the start and end.",
+          "title": "Max Gap"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "seasonal": {
+          "default": [],
+          "description": "Repeating cycles, e.g. [{period: 1D, harmonics: 2}].",
+          "items": {
+            "$ref": "#/$defs/SeasonalTerm"
+          },
+          "title": "Seasonal",
+          "type": "array"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "Kalman",
       "type": "object"
     },
     "Mask": {
@@ -497,6 +1392,152 @@
       "title": "Mask",
       "type": "object"
     },
+    "NeuralforecastForecast": {
+      "additionalProperties": false,
+      "description": "Train a neural network on the history, then forecast the horizon.\n\nA registered forecaster: ``flexsignal.adapters.deep.neuralforecast_forecast``.",
+      "properties": {
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "input_size": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How much history the network looks at for each forecast, as a duration (e.g. ``2D``). Default: twice the horizon.",
+          "title": "Input Size"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "NeuralforecastForecast",
+          "default": "NeuralforecastForecast",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "loss": {
+          "default": "quantile",
+          "description": "``quantile`` (default) trains on a set of quantiles (1%, 5%, 10%, 20%, ..., 90%, 95%, 99%), so the step can write quantile streams; the forecast is the median. ``mae`` or ``mse`` train a point forecast only (no quantiles).",
+          "enum": [
+            "quantile",
+            "mae",
+            "mse"
+          ],
+          "title": "Loss",
+          "type": "string"
+        },
+        "max_steps": {
+          "default": 300,
+          "description": "How many training steps (batches) to run. More fits better but takes longer.",
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "model": {
+          "default": "NHITS",
+          "description": "The network, by class name. Tested: ``NHITS`` (default), ``NBEATS``, ``NBEATSx``, ``MLP``, ``LSTM``, ``TiDE``, ``PatchTST`` and ``DLinear``; NBEATS, PatchTST and DLinear don't use exog streams. Any other neuralforecast model, e.g. ``TFT`` or ``iTransformer``, runs too, untested; its own settings go in ``params``.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Extra arguments for the model's constructor, e.g. ``{\"learning_rate\": 0.001, \"batch_size\": 32}``. Arguments the step sets itself (such as ``h`` or ``loss``) are refused.",
+          "title": "Params"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "scaler": {
+          "default": "standard",
+          "description": "How each training window is scaled before the network sees it: ``standard`` (default), ``robust``, ``minmax`` or ``identity``.",
+          "enum": [
+            "standard",
+            "robust",
+            "minmax",
+            "identity"
+          ],
+          "title": "Scaler",
+          "type": "string"
+        },
+        "seed": {
+          "default": 0,
+          "description": "The random seed, so training repeats exactly.",
+          "title": "Seed",
+          "type": "integer"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "NeuralforecastForecast",
+      "type": "object"
+    },
     "ParquetInput": {
       "additionalProperties": false,
       "description": "A Parquet file, read when the caller doesn't bind data to this slot.",
@@ -545,6 +1586,472 @@
         "path"
       ],
       "title": "ParquetOutput",
+      "type": "object"
+    },
+    "Persistence": {
+      "additionalProperties": false,
+      "description": "Hold the last value: the target's last value before the issue time.\n\nA baseline that a forecaster has to beat. Its intervals widen with the square\nroot of the lead time, from the spread of the training data's step-to-step\nchanges.",
+      "properties": {
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "forecast_persistence",
+          "default": "forecast_persistence",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "Persistence",
+      "type": "object"
+    },
+    "PyodDetector": {
+      "additionalProperties": false,
+      "description": "Reject the values a pyod outlier detector scores as most unusual.\n\nA registered cleaner: ``flexsignal.adapters.anomaly.pyod_detector``.",
+      "properties": {
+        "contamination": {
+          "default": 0.01,
+          "description": "The share of present values to reject, above 0 and at most 0.5; e.g. 0.01 rejects the 1% most unusual values.",
+          "title": "Contamination",
+          "type": "number"
+        },
+        "features": {
+          "default": [
+            "value",
+            "residual"
+          ],
+          "description": "What the detector sees for each value: ``value``, ``diff`` (change from the previous present value) and ``residual`` (distance from the rolling median over ``window``). At least one.",
+          "items": {
+            "enum": [
+              "value",
+              "diff",
+              "residual"
+            ],
+            "type": "string"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "kind": {
+          "const": "PyodDetector",
+          "default": "PyodDetector",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model": {
+          "default": "IForest",
+          "description": "The pyod detector, by class name. Tested: ``IForest`` (default; Isolation Forest, seeded by ``seed``), ``ECOD`` and ``COPOD`` (no parameters; they rank values by how far into the tails they are, so ties among extreme values are common), ``HBOS`` (histograms; fast), ``KNN`` (distance to the 5th nearest value) and ``LOF`` (local density). Any other pyod detector, e.g. ``OCSVM`` or ``PCA``, runs too, untested; its own arguments go in ``params``.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "params": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "Other arguments of the detector, e.g. ``{\"n_neighbors\": 10}`` for ``KNN`` or ``LOF``; checked against it when the step runs.",
+          "title": "Params",
+          "type": "object"
+        },
+        "seed": {
+          "default": 0,
+          "description": "The random seed for detectors that use one (``IForest``), so repeated runs give the same result.",
+          "title": "Seed",
+          "type": "integer"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "window": {
+          "default": "1h",
+          "description": "The centred rolling-median window for the ``residual`` feature, a duration such as ``1h``.",
+          "title": "Window",
+          "type": "string"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "PyodDetector",
+      "type": "object"
+    },
+    "PypotsForecast": {
+      "additionalProperties": false,
+      "description": "Forecast a stream from its own history with a PyPOTS forecasting network.\n\nA registered forecaster: ``flexsignal.adapters.pypots.pypots_forecast``.",
+      "properties": {
+        "batch_size": {
+          "default": 32,
+          "description": "Pairs per training batch.",
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "d_model": {
+          "default": 32,
+          "description": "Width of the network (CSDI: channels; ignored by TEFN).",
+          "title": "D Model",
+          "type": "integer"
+        },
+        "epochs": {
+          "default": 30,
+          "description": "Training passes over the pairs.",
+          "title": "Epochs",
+          "type": "integer"
+        },
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "PypotsForecast",
+          "default": "PypotsForecast",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "learning_rate": {
+          "default": 0.001,
+          "description": "The Adam optimizer's learning rate.",
+          "title": "Learning Rate",
+          "type": "number"
+        },
+        "lookback": {
+          "default": "1D",
+          "description": "How much history each forecast is made from, e.g. 1D. At least one cycle of the data.",
+          "title": "Lookback",
+          "type": "string"
+        },
+        "model": {
+          "default": "DLinear",
+          "description": "The PyPOTS network, by class name. Tested: ``DLinear`` (trend + seasonal linear; fast, a strong default), ``TimesNet`` (convolutions over periods), ``Transformer``, ``TEFN`` (small evidence-based network) and ``CSDI`` (diffusion; slow; gives quantiles from ``samples`` draws). Any other PyPOTS forecasting model, e.g. ``SegRNN``, runs too, untested: give its own required settings in ``params``.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "n_heads": {
+          "default": 4,
+          "description": "Attention heads for Transformer and CSDI; d_model must be a multiple of it.",
+          "title": "N Heads",
+          "type": "integer"
+        },
+        "n_layers": {
+          "default": 2,
+          "description": "Network layers (ignored by DLinear and TEFN).",
+          "title": "N Layers",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "params": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "Other arguments of the PyPOTS model's constructor, e.g. {\"dropout\": 0.1} for Transformer, or the required settings of an untested model; checked against the model when it runs.",
+          "title": "Params",
+          "type": "object"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "samples": {
+          "default": 50,
+          "description": "CSDI only: draws whose mean is the forecast and whose spread gives the quantiles. Use 50 or more for 10%/90% quantiles.",
+          "title": "Samples",
+          "type": "integer"
+        },
+        "seed": {
+          "default": 0,
+          "description": "Seed for the weights and training, so runs repeat exactly.",
+          "title": "Seed",
+          "type": "integer"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "stride": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time between the starts of the training pairs, e.g. 1h. Default: one data step (every possible pair).",
+          "title": "Stride"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "PypotsForecast",
+      "type": "object"
+    },
+    "PypotsImpute": {
+      "additionalProperties": false,
+      "description": "Fill gaps with a PyPOTS imputation network trained on the data itself.\n\nA registered imputer: ``flexsignal.adapters.pypots.pypots_impute``.",
+      "properties": {
+        "batch_size": {
+          "default": 32,
+          "description": "Windows per training batch.",
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "d_model": {
+          "default": 32,
+          "description": "Width of the network: SAITS/TimesNet model size, BRITS hidden size, CSDI channels.",
+          "title": "D Model",
+          "type": "integer"
+        },
+        "epochs": {
+          "default": 30,
+          "description": "Training passes over the windows.",
+          "title": "Epochs",
+          "type": "integer"
+        },
+        "features": {
+          "default": [],
+          "description": "Other streams fed to the model as extra inputs, e.g. [\"pressure\"]. Default: none.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "kind": {
+          "const": "PypotsImpute",
+          "default": "PypotsImpute",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "learning_rate": {
+          "default": 0.001,
+          "description": "The Adam optimizer's learning rate.",
+          "title": "Learning Rate",
+          "type": "number"
+        },
+        "max_gap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Longest gap to fill, measured between the valid samples either side, e.g. 6h. Default: every gap, including those at the start and end.",
+          "title": "Max Gap"
+        },
+        "model": {
+          "default": "SAITS",
+          "description": "The PyPOTS network, by class name. Tested: ``SAITS`` (self-attention, a strong default), ``BRITS`` (bidirectional RNN), ``CSDI`` (diffusion; slow, needs many training batches before its fills are usable, averages ``samples`` draws) and ``TimesNet`` (convolutions over periods). Any other PyPOTS imputation model, e.g. ``ImputeFormer``, runs too, untested: give its own required settings in ``params``.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "n_heads": {
+          "default": 4,
+          "description": "Attention heads for SAITS and CSDI; d_model must be a multiple of it.",
+          "title": "N Heads",
+          "type": "integer"
+        },
+        "n_layers": {
+          "default": 2,
+          "description": "Network layers (ignored by BRITS).",
+          "title": "N Layers",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "params": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "Other arguments of the PyPOTS model's constructor, e.g. {\"dropout\": 0.1} for SAITS, or the required settings of an untested model; checked against the model when it runs.",
+          "title": "Params",
+          "type": "object"
+        },
+        "samples": {
+          "default": 10,
+          "description": "CSDI only: how many draws to average into each fill.",
+          "title": "Samples",
+          "type": "integer"
+        },
+        "seed": {
+          "default": 0,
+          "description": "Seed for the weights and training, so runs repeat exactly.",
+          "title": "Seed",
+          "type": "integer"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "stride": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time between window starts, e.g. 6h. Default: half the window. Overlapping fills are averaged.",
+          "title": "Stride"
+        },
+        "window": {
+          "default": "1D",
+          "description": "Length of the windows the model sees, e.g. 1D. Make it longer than the longest gap and at least one cycle of the data.",
+          "title": "Window",
+          "type": "string"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "PypotsImpute",
       "type": "object"
     },
     "Quantity": {
@@ -788,6 +2295,236 @@
       "title": "Resample",
       "type": "object"
     },
+    "RollingRefit": {
+      "additionalProperties": false,
+      "description": "Refit the calibration on a moving window, so it follows drift.",
+      "properties": {
+        "every": {
+          "default": "1D",
+          "description": "How often to refit. Each block of this length uses a model fitted on the window that ends where the block ends.",
+          "title": "Every",
+          "type": "string"
+        },
+        "min_rows": {
+          "default": 10,
+          "description": "Fewest trusted rows a window needs. Blocks with fewer use the model fitted on the training data.",
+          "minimum": 2,
+          "title": "Min Rows",
+          "type": "integer"
+        },
+        "rolling": {
+          "description": "Width of the window of trusted reference rows each refit uses, e.g. 1D.",
+          "title": "Rolling",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rolling"
+      ],
+      "title": "RollingRefit",
+      "type": "object"
+    },
+    "RupturesChangepoint": {
+      "additionalProperties": false,
+      "description": "Reject short segments that jump away from the level on both sides.\n\nA registered cleaner: ``flexsignal.adapters.anomaly.ruptures_changepoint``.",
+      "properties": {
+        "algorithm": {
+          "default": "Pelt",
+          "description": "The ruptures search, by class name. Tested: ``Pelt`` (default; exact), ``Binseg`` and ``BottomUp`` (approximate, faster on long streams). ``Window`` and ``KernelCPD`` run too, untested; their own arguments go in ``params``.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "cost": {
+          "default": "l2",
+          "description": "The segment cost: ``l2`` (default; change in mean) or ``l1`` (change in median; more robust to spikes).",
+          "enum": [
+            "l2",
+            "l1"
+          ],
+          "title": "Cost",
+          "type": "string"
+        },
+        "kind": {
+          "const": "RupturesChangepoint",
+          "default": "RupturesChangepoint",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_segment": {
+          "default": "30min",
+          "description": "The longest segment that can be rejected, a duration such as ``30min``. Longer segments are kept as real regimes.",
+          "title": "Max Segment",
+          "type": "string"
+        },
+        "min_shift": {
+          "default": 5.0,
+          "description": "How far, in noise standard deviations, a short segment's level must be from both neighbours to be rejected.",
+          "title": "Min Shift",
+          "type": "number"
+        },
+        "min_size": {
+          "default": 1,
+          "description": "The fewest samples in a segment. 1 (default) lets a single sample be its own segment.",
+          "title": "Min Size",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "params": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "Other arguments of the ruptures algorithm, e.g. ``{\"width\": 20}`` for ``Window``.",
+          "title": "Params",
+          "type": "object"
+        },
+        "penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The cost of adding a change point, on the stream scaled to unit noise. None (default) uses 2\u00b7log(n). Raise it to find fewer, larger changes.",
+          "title": "Penalty"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "RupturesChangepoint",
+      "type": "object"
+    },
+    "SeasonalNaive": {
+      "additionalProperties": false,
+      "description": "Repeat the last season: each forecast value is the value one season earlier.\n\nWith ``season=\"1D\"``, the forecast for 14:00 tomorrow is the value at 14:00\ntoday, or the latest day before that with a value. A baseline that a\nforecaster has to beat. Its intervals widen with the square root of the\nnumber of seasons reached back, from the spread of the training data's\nseason-to-season changes.",
+      "properties": {
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "forecast_seasonal_naive",
+          "default": "forecast_seasonal_naive",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "season": {
+          "default": "1D",
+          "description": "Length of the season to repeat, e.g. 1D or 7D.",
+          "title": "Season",
+          "type": "string"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "SeasonalNaive",
+      "type": "object"
+    },
+    "SeasonalTerm": {
+      "additionalProperties": false,
+      "description": "A repeating cycle, described by a few sine and cosine waves.",
+      "properties": {
+        "harmonics": {
+          "default": 2,
+          "description": "How many sine/cosine pairs describe its shape.",
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Harmonics",
+          "type": "integer"
+        },
+        "period": {
+          "description": "Length of one cycle, e.g. 1D or 7D.",
+          "title": "Period",
+          "type": "string"
+        }
+      },
+      "required": [
+        "period"
+      ],
+      "title": "SeasonalTerm",
+      "type": "object"
+    },
     "Shift": {
       "additionalProperties": false,
       "description": "Shift streams in time, e.g. to undo a known transport delay.\n\nA positive ``by`` moves values later. It needs a regular index, and ``by``\nmust be a whole number of steps. Grid points left without a value are\nflagged ``MISSING``.",
@@ -831,6 +2568,226 @@
         "by"
       ],
       "title": "Shift",
+      "type": "object"
+    },
+    "SktimeForecast": {
+      "additionalProperties": false,
+      "description": "Forecast with an sktime forecaster, fitted on the history each time it runs.\n\nA registered forecaster: ``flexsignal.adapters.sktime.sktime_forecast``.",
+      "properties": {
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "SktimeForecast",
+          "default": "SktimeForecast",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model": {
+          "default": "ThetaForecaster",
+          "description": "The sktime forecaster, by class name. Tested: NaiveForecaster, ThetaForecaster, ExponentialSmoothing, AutoETS, SARIMAX, UnobservedComponents, STLForecaster and PolynomialTrendForecaster. Any other sktime forecaster, e.g. TrendForecaster or BATS, runs too, untested: its own arguments go in params.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Arguments for the forecaster's constructor, e.g. {\"strategy\": \"mean\"} for NaiveForecaster or {\"order\": [2, 0, 1]} for SARIMAX. They override the ones flex-signal derives from season.",
+          "title": "Params"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "season": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "1D",
+          "description": "The signal's cycle, e.g. 1D for a daily cycle, or null for none. It sets sp (NaiveForecaster, ThetaForecaster, STLForecaster), sp and seasonal=\"add\" (ExponentialSmoothing, AutoETS), seasonal_order (1, 1, 1, m) (SARIMAX, whose order defaults to (1, 0, 0)) or a freq_seasonal cycle (UnobservedComponents, with a local level). PolynomialTrendForecaster doesn't use it.",
+          "title": "Season"
+        },
+        "seed": {
+          "default": 0,
+          "description": "The random_state of forecasters that take one, so a run repeats.",
+          "title": "Seed",
+          "type": "integer"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "SktimeForecast",
+      "type": "object"
+    },
+    "Structural": {
+      "additionalProperties": false,
+      "description": "Forecast with a structural time-series model (statsmodels' UnobservedComponents).\n\nThe target is modelled as a level (``local_level``) or a level with a slope\n(``local_linear_trend``), plus ``seasonal`` cycles, an optional\n``autoregressive`` term for slowly decaying departures, a linear effect of\neach ``exog`` stream, and noise. ``fit`` estimates the model's parameters by\nmaximum likelihood on the training data and stores them as JSON;\n``transform`` runs the Kalman filter over the new data's history with those\nparameters and forecasts from the issue time. The intervals come from the\nmodel's forecast variance. Missing target values in the history are fine;\n``exog`` streams need a value at every time step.",
+      "properties": {
+        "autoregressive": {
+          "default": 0,
+          "description": "Order of an autoregressive term; 0 for none.",
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Autoregressive",
+          "type": "integer"
+        },
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "forecast_structural",
+          "default": "forecast_structural",
+          "title": "Kind",
+          "type": "string"
+        },
+        "level": {
+          "default": "local_level",
+          "description": "How the underlying level moves.",
+          "enum": [
+            "local_level",
+            "local_linear_trend"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "seasonal": {
+          "default": [],
+          "description": "Repeating cycles, e.g. [{period: 1D, harmonics: 2}].",
+          "items": {
+            "$ref": "#/$defs/SeasonalTerm"
+          },
+          "title": "Seasonal",
+          "type": "array"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "Structural",
       "type": "object"
     },
     "Stuck": {
@@ -892,6 +2849,223 @@
         "min_duration"
       ],
       "title": "Stuck",
+      "type": "object"
+    },
+    "StumpyDiscord": {
+      "additionalProperties": false,
+      "description": "Reject the samples of stretches unlike anything else in the stream.\n\nA registered cleaner: ``flexsignal.adapters.anomaly.stumpy_discord``.",
+      "properties": {
+        "k": {
+          "default": 6.0,
+          "description": "The robust z-score above which a stretch is anomalous. Lower it to reject more.",
+          "title": "K",
+          "type": "number"
+        },
+        "kind": {
+          "const": "StumpyDiscord",
+          "default": "StumpyDiscord",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "normalize": {
+          "default": false,
+          "description": "Compare stretches by shape only (z-normalized, stumpy's default) instead of by their actual values (False, the default here). Shape-only comparison misses level glitches and spikes, which look alike once normalized.",
+          "title": "Normalize",
+          "type": "boolean"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "window": {
+          "default": "1h",
+          "description": "The stretch length, a duration such as ``1h``: about as long as the faults to find. At least 3 samples.",
+          "title": "Window",
+          "type": "string"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "StumpyDiscord",
+      "type": "object"
+    },
+    "T0Forecast": {
+      "additionalProperties": false,
+      "description": "Forecast with The Forecasting Company's pretrained t0, zero-shot.\n\nA registered forecaster: ``flexsignal.adapters.foundation.t0_forecast``.",
+      "properties": {
+        "context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How much history the model reads, as a duration (e.g. ``14D``). Default: all of it.",
+          "title": "Context"
+        },
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "T0Forecast",
+          "default": "T0Forecast",
+          "description": "Which step this is.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model": {
+          "const": "theforecastingcompany/t0-alpha",
+          "default": "theforecastingcompany/t0-alpha",
+          "description": "The pretrained model, by Hugging Face id: ``theforecastingcompany/t0-alpha`` (Apache-2.0).",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The model's Hugging Face commit. Default: the commit this version of flex-signal pins for the model, so results don't change when the model is updated upstream.",
+          "title": "Revision"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "T0Forecast",
+      "type": "object"
+    },
+    "Tiered": {
+      "additionalProperties": false,
+      "description": "Route each gap to an imputer by its length.\n\nShort gaps are best interpolated; long ones need a model. For example::\n\n    tiers=[\n        {\"max_gap\": \"15min\", \"method\": \"interpolate\"},\n        {\"max_gap\": \"6h\", \"method\": \"regression\",\n         \"options\": {\"features\": [\"pressure\"]}},\n        {\"max_gap\": None, \"method\": \"kalman\"},\n    ]\n\nA gap goes to the first tier whose ``max_gap`` covers its length, measured in\nthe data as it arrives at this step. Each tier's imputer is fitted on the\ntraining data, and its state is kept under ``tiers``. Filled values carry the\nflag of the method that filled them.",
+      "properties": {
+        "kind": {
+          "const": "tiered",
+          "default": "tiered",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        },
+        "tiers": {
+          "description": "The tiers, shortest max_gap first.",
+          "items": {
+            "$ref": "#/$defs/ImputeTier"
+          },
+          "minItems": 1,
+          "title": "Tiers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "tiers"
+      ],
+      "title": "Tiered",
       "type": "object"
     },
     "Tukey": {
@@ -1005,6 +3179,221 @@
       },
       "title": "Window",
       "type": "object"
+    },
+    "flexsignal__steps__forecast__Regression": {
+      "additionalProperties": false,
+      "description": "Forecast with a linear model of cycles, exog streams and lagged values.\n\nThe inputs at each time are:\n\n- sine and cosine terms for each ``fourier`` cycle;\n- each ``exog`` stream at that time (known ahead);\n- the target itself ``lags`` earlier: the forecast is then made one step at a\n  time, each step using the ones before it;\n- each ``past`` stream ``past_lags`` earlier. Those streams are known only up to\n  the issue time, so every ``past_lags`` must be at least the horizon.\n\n``fit`` learns one model per target on the training rows where the target and\nall its inputs have values, and stores the coefficients as JSON. The\nintervals are the training residuals' quantiles; they don't widen with lead\ntime, so with ``lags`` they understate the uncertainty far ahead.",
+      "properties": {
+        "exog": {
+          "default": [],
+          "description": "Streams known ahead (a price schedule, a weather forecast). Their values after the issue time must be in the data.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exog",
+          "type": "array"
+        },
+        "fourier": {
+          "default": [],
+          "description": "Cycles to model, e.g. [{period: 1D, harmonics: 3}].",
+          "items": {
+            "$ref": "#/$defs/FourierTerm"
+          },
+          "title": "Fourier",
+          "type": "array"
+        },
+        "horizon": {
+          "description": "How far ahead to forecast, e.g. 1D. A whole number of steps.",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "issue_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the forecast is made: it uses the targets' values up to this time and forecasts the rows after it. Default: the last time any target has a value.",
+          "title": "Issue Time"
+        },
+        "kind": {
+          "const": "forecast_regression",
+          "default": "forecast_regression",
+          "title": "Kind",
+          "type": "string"
+        },
+        "lags": {
+          "default": [],
+          "description": "Also use the target this long before, e.g. [1h, 1D].",
+          "items": {
+            "type": "string"
+          },
+          "title": "Lags",
+          "type": "array"
+        },
+        "model": {
+          "default": "sklearn:LinearRegression",
+          "description": "A linear model key: least squares by default, or e.g. sklearn:Ridge with params {alpha: ...} when there are many inputs.",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "params": {
+          "additionalProperties": true,
+          "description": "Keyword arguments for the model.",
+          "title": "Params",
+          "type": "object"
+        },
+        "past": {
+          "default": [],
+          "description": "Streams known only up to the issue time, used past_lags earlier.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Past",
+          "type": "array"
+        },
+        "past_lags": {
+          "default": [],
+          "description": "How long before to use each past stream; each at least horizon.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Past Lags",
+          "type": "array"
+        },
+        "quantiles": {
+          "default": [],
+          "description": "Quantiles to write as <stream>__q10-style streams, e.g. [0.1, 0.9]. Each is a whole percent between 1 and 99.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams",
+        "horizon"
+      ],
+      "title": "Regression",
+      "type": "object"
+    },
+    "flexsignal__steps__impute__Regression": {
+      "additionalProperties": false,
+      "description": "Fill gaps from a linear model of other streams and of time of day or week.\n\nThe inputs are the ``features`` streams, each also at every lag in ``lags``,\nand sine and cosine terms for each ``fourier`` cycle. ``fit`` learns one model\nper stream on the training rows where the stream and all its inputs have\nvalues, and stores the coefficients as JSON. ``transform`` fills a gap\nwherever the inputs have values. Filled values gain ``IMPUTED_MODEL``.\n\nModels are the linear models of\n:data:`~flexsignal.backends.models.LINEAR_MODELS`, e.g. ``sklearn:Ridge``.",
+      "properties": {
+        "features": {
+          "default": [],
+          "description": "Other streams the model uses, e.g. [pressure].",
+          "items": {
+            "type": "string"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "fourier": {
+          "default": [],
+          "description": "Cycles to model, e.g. [{period: 1D, harmonics: 3}].",
+          "items": {
+            "$ref": "#/$defs/FourierTerm"
+          },
+          "title": "Fourier",
+          "type": "array"
+        },
+        "kind": {
+          "const": "regression",
+          "default": "regression",
+          "title": "Kind",
+          "type": "string"
+        },
+        "lags": {
+          "default": [],
+          "description": "Also use each feature this long before, e.g. [5min, 15min]. Needs a regular index.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Lags",
+          "type": "array"
+        },
+        "max_gap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Longest gap to fill, measured between the valid samples either side, e.g. 6h. Default: every gap, including those at the start and end.",
+          "title": "Max Gap"
+        },
+        "model": {
+          "default": "sklearn:Ridge",
+          "description": "A linear model key, e.g. sklearn:Ridge.",
+          "title": "Model",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label for this step, shown in provenance and reports. Must be unique within a spec.",
+          "title": "Name"
+        },
+        "params": {
+          "additionalProperties": true,
+          "description": "Keyword arguments for the model.",
+          "title": "Params",
+          "type": "object"
+        },
+        "streams": {
+          "description": "The streams this step acts on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "streams"
+      ],
+      "title": "Regression",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1085,6 +3474,15 @@
       "title": "Outputs",
       "type": "array"
     },
+    "requires": {
+      "default": [],
+      "description": "Modules that register the methods this spec uses, e.g. myplant.methods. Only a hint for error messages: flex-signal never imports them. Load them with fs.load_plugins or plugins=.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Requires",
+      "type": "array"
+    },
     "schema_version": {
       "default": "0.1.0",
       "description": "Version of the SignalSpec schema, X.Y.Z.",
@@ -1098,18 +3496,41 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "ChronosForecast": "#/$defs/ChronosForecast",
+            "DartsForecast": "#/$defs/DartsForecast",
+            "NeuralforecastForecast": "#/$defs/NeuralforecastForecast",
+            "PyodDetector": "#/$defs/PyodDetector",
+            "PypotsForecast": "#/$defs/PypotsForecast",
+            "PypotsImpute": "#/$defs/PypotsImpute",
+            "RupturesChangepoint": "#/$defs/RupturesChangepoint",
+            "SktimeForecast": "#/$defs/SktimeForecast",
+            "StumpyDiscord": "#/$defs/StumpyDiscord",
+            "T0Forecast": "#/$defs/T0Forecast",
             "align": "#/$defs/Align",
+            "calibrate": "#/$defs/Calibrate",
             "combine": "#/$defs/Combine",
+            "convert_units": "#/$defs/ConvertUnits",
+            "detotalize": "#/$defs/Detotalize",
             "expression": "#/$defs/Expression",
+            "filter": "#/$defs/Filter",
+            "forecast_persistence": "#/$defs/Persistence",
+            "forecast_regression": "#/$defs/flexsignal__steps__forecast__Regression",
+            "forecast_seasonal_naive": "#/$defs/SeasonalNaive",
+            "forecast_structural": "#/$defs/Structural",
             "hampel": "#/$defs/Hampel",
             "interpolate": "#/$defs/Interpolate",
+            "iterative": "#/$defs/Iterative",
+            "kalman": "#/$defs/Kalman",
+            "knn": "#/$defs/KNN",
             "mask": "#/$defs/Mask",
             "range": "#/$defs/Range",
             "rate_of_change": "#/$defs/RateOfChange",
+            "regression": "#/$defs/flexsignal__steps__impute__Regression",
             "rename": "#/$defs/Rename",
             "resample": "#/$defs/Resample",
             "shift": "#/$defs/Shift",
             "stuck": "#/$defs/Stuck",
+            "tiered": "#/$defs/Tiered",
             "tukey": "#/$defs/Tukey",
             "window": "#/$defs/Window"
           },
@@ -1117,19 +3538,82 @@
         },
         "oneOf": [
           {
+            "$ref": "#/$defs/ChronosForecast"
+          },
+          {
+            "$ref": "#/$defs/DartsForecast"
+          },
+          {
+            "$ref": "#/$defs/NeuralforecastForecast"
+          },
+          {
+            "$ref": "#/$defs/PyodDetector"
+          },
+          {
+            "$ref": "#/$defs/PypotsForecast"
+          },
+          {
+            "$ref": "#/$defs/PypotsImpute"
+          },
+          {
+            "$ref": "#/$defs/RupturesChangepoint"
+          },
+          {
+            "$ref": "#/$defs/SktimeForecast"
+          },
+          {
+            "$ref": "#/$defs/StumpyDiscord"
+          },
+          {
+            "$ref": "#/$defs/T0Forecast"
+          },
+          {
             "$ref": "#/$defs/Align"
+          },
+          {
+            "$ref": "#/$defs/Calibrate"
           },
           {
             "$ref": "#/$defs/Combine"
           },
           {
+            "$ref": "#/$defs/ConvertUnits"
+          },
+          {
+            "$ref": "#/$defs/Detotalize"
+          },
+          {
             "$ref": "#/$defs/Expression"
+          },
+          {
+            "$ref": "#/$defs/Filter"
+          },
+          {
+            "$ref": "#/$defs/Persistence"
+          },
+          {
+            "$ref": "#/$defs/flexsignal__steps__forecast__Regression"
+          },
+          {
+            "$ref": "#/$defs/SeasonalNaive"
+          },
+          {
+            "$ref": "#/$defs/Structural"
           },
           {
             "$ref": "#/$defs/Hampel"
           },
           {
             "$ref": "#/$defs/Interpolate"
+          },
+          {
+            "$ref": "#/$defs/Iterative"
+          },
+          {
+            "$ref": "#/$defs/Kalman"
+          },
+          {
+            "$ref": "#/$defs/KNN"
           },
           {
             "$ref": "#/$defs/Mask"
@@ -1139,6 +3623,9 @@
           },
           {
             "$ref": "#/$defs/RateOfChange"
+          },
+          {
+            "$ref": "#/$defs/flexsignal__steps__impute__Regression"
           },
           {
             "$ref": "#/$defs/Rename"
@@ -1151,6 +3638,9 @@
           },
           {
             "$ref": "#/$defs/Stuck"
+          },
+          {
+            "$ref": "#/$defs/Tiered"
           },
           {
             "$ref": "#/$defs/Tukey"

@@ -141,12 +141,17 @@ def test_cleaners_leave_missing_values_and_other_streams_alone():
 
 
 @pytest.mark.unit
-def test_range_quantity_units_must_match():
+def test_range_quantity_bounds_are_converted_to_the_streams_units():
+    pytest.importorskip("pint")
     sf = synthetic.plant().signal()
-    out = _run(fs.clean.Range("flow", max={"value": 50, "units": "m^3/hr"}), sf)
-    assert _flagged(out, Flag.OUT_OF_RANGE).any()
-    with pytest.raises(SignalConfigError, match="stream's units"):
-        _run(fs.clean.Range("flow", max={"value": 50, "units": "L/s"}), sf)
+    same = _run(fs.clean.Range("flow", max={"value": 50, "units": "m^3/hr"}), sf)
+    assert _flagged(same, Flag.OUT_OF_RANGE).any()
+    # 25 L/s is 90 m^3/hr.
+    in_litres = _run(fs.clean.Range("flow", max={"value": 25, "units": "L/s"}), sf)
+    in_hours = _run(fs.clean.Range("flow", max=90.0), sf)
+    pd.testing.assert_frame_equal(in_litres.flags, in_hours.flags)
+    with pytest.raises(SignalConfigError, match="can't convert"):
+        _run(fs.clean.Range("flow", max={"value": 50, "units": "kW"}), sf)
 
 
 @pytest.mark.unit
@@ -161,3 +166,58 @@ def test_unknown_stream_and_too_little_data():
                 values=sf.values[["reference_flow"]].iloc[:3]
             )
         )
+
+
+# -- M2: filter and detotalize -------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"method": "savgol", "window": "1h"},
+        {"method": "butterworth", "cutoff": "2h"},
+        {"method": "median", "window": "30min"},
+    ],
+)
+def test_filter_reduces_noise_and_flags_what_it_smoothed(options):
+    case = synthetic.plant(seed=4).with_gaps("flow", count=3, length=4)
+    sf = case.signal()
+    out = fs.clean.Filter("flow", **options).transform(sf, {})
+    noise = sf.values["flow"] - case.underlying["flow"]
+    left = out.values["flow"] - case.underlying["flow"]
+    assert left.std() < 0.6 * noise.std()
+    flags = out.flags["flow"].to_numpy()
+    valid = sf.values["flow"].notna().to_numpy()
+    assert np.all((flags[valid] & int(Flag.FILTERED)) != 0)
+    assert out.values["flow"][~valid].isna().all()
+
+
+@pytest.mark.unit
+def test_filter_needs_its_options_and_a_sensible_cutoff():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="needs a window"):
+        fs.clean.Filter("flow", method="savgol")
+    with pytest.raises(ValidationError, match="needs a cutoff"):
+        fs.clean.Filter("flow", method="butterworth")
+    sf = synthetic.plant(seed=0, periods=50).signal()
+    with pytest.raises(fs.SignalConfigError, match="longer than two samples"):
+        fs.clean.Filter("flow", method="butterworth", cutoff="5min").transform(sf, {})
+
+
+@pytest.mark.unit
+def test_detotalize_unwraps_rollover_and_marks_resets():
+    index = pd.date_range("2025-01-01", periods=6, freq="1h", tz="UTC")
+    total = pd.DataFrame({"m": [990.0, 995, 2, 7, np.nan, 17]}, index=index)
+    sf = fs.SignalFrame(total, meta={"m": {"units": "m^3"}})
+    out = fs.clean.Detotalize("m", rollover=1000, units="m^3/hr").transform(sf, {})
+    assert out.values["m"].tolist()[1:4] == [5.0, 7.0, 5.0]
+    assert out.values["m"].iloc[5] == 5.0  # 10 m^3 over the 2 h gap
+    assert out.units["m"] == "m^3/hr"
+    assert out.flags["m"].iloc[0] == Flag.MISSING
+    reset = fs.clean.Detotalize("m").transform(sf, {})
+    assert np.isnan(reset.values["m"].iloc[2])
+    assert reset.flags["m"].iloc[2] == Flag.OUT_OF_RANGE
+    per_minute = fs.clean.Detotalize("m", per="1min", rollover=1000).transform(sf, {})
+    assert per_minute.values["m"].iloc[1] == pytest.approx(5 / 60)

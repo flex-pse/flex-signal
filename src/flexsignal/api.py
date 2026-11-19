@@ -1,4 +1,4 @@
-"""Entry points that follow the orchestrator contract (PLAN.md §4.3).
+"""Entry points that follow the orchestrator contract.
 
 These are the functions flex-orchestrator will wrap:
 
@@ -9,7 +9,7 @@ These are the functions flex-orchestrator will wrap:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,7 @@ from flexsignal.core.frame import SignalFrame
 from flexsignal.io import write_csv, write_parquet
 from flexsignal.pipeline import DataLike, FittedPipeline, Pipeline, Progress
 from flexsignal.spec import CsvOutput, ParquetOutput, SignalSpec, load_spec
+from flexsignal.steps.registered import load_plugins
 
 __all__ = ["RunResult", "fit", "run"]
 
@@ -76,8 +77,13 @@ class RunResult:
 
 
 def _resolve(
-    spec: SignalSpec | Mapping[str, Any] | str | Path, base_dir: str | Path | None
+    spec: SignalSpec | Mapping[str, Any] | str | Path,
+    base_dir: str | Path | None,
+    plugins: Sequence[str] = (),
 ) -> tuple[SignalSpec, Path]:
+    if isinstance(plugins, str):
+        plugins = [plugins]
+    load_plugins(*plugins)
     if isinstance(spec, str | Path) and not str(spec).lstrip().startswith("{"):
         root = Path(base_dir) if base_dir is not None else Path(spec).parent
         return load_spec(spec, base_dir=root), root
@@ -91,6 +97,7 @@ def fit(
     *,
     base_dir: str | Path | None = None,
     progress: Progress | None = None,
+    plugins: Sequence[str] = (),
 ) -> FittedPipeline:
     """Fit a pipeline from a spec.
 
@@ -101,11 +108,15 @@ def fit(
         base_dir: Directory for relative paths (default: the spec file's directory,
             or the working directory).
         progress: Called as ``progress(fraction, message)`` after each step.
+        plugins: Modules to import first, so the methods they register are
+            available, e.g. ``["myplant.methods"]`` (see
+            :func:`flexsignal.load_plugins`). Chosen by the caller, never by the
+            spec.
 
     Returns:
         The fitted pipeline.
     """
-    resolved, root = _resolve(spec, base_dir)
+    resolved, root = _resolve(spec, base_dir, plugins)
     return Pipeline.from_spec(resolved).fit(data, base_dir=root, progress=progress)
 
 
@@ -116,6 +127,7 @@ def run(
     base_dir: str | Path | None = None,
     write_outputs: bool = True,
     progress: Progress | None = None,
+    plugins: Sequence[str] = (),
 ) -> RunResult:
     """Fit a pipeline on data and return the transformed result.
 
@@ -128,11 +140,14 @@ def run(
         write_outputs: Write the spec's ``outputs``. Pass False to keep the run
             free of file I/O.
         progress: Called as ``progress(fraction, message)`` after each step.
+        plugins: Modules to import first, so the methods they register are
+            available (see :func:`flexsignal.load_plugins`). Chosen by the
+            caller, never by the spec.
 
     Returns:
         A :class:`RunResult`.
     """
-    resolved, root = _resolve(spec, base_dir)
+    resolved, root = _resolve(spec, base_dir, plugins)
     fitted, signal = Pipeline.from_spec(resolved).fit_transform(
         data, base_dir=root, progress=progress
     )

@@ -41,7 +41,7 @@ Timestamps written *in a spec*, such as a `window` step's `start`, are different
 UTC, so a spec means the same thing on every machine.
 
 Local, naive time appears in only one place: the flex-pse boundary. flex-pse models run on the facility's local
-wall clock, and the conversion happens there (M3).
+wall clock, and the conversion happens there.
 
 ## Grids and durations
 
@@ -58,9 +58,12 @@ Interpolation gap lengths are measured between the valid samples either side of 
 Each stream's units are a string in its {class}`~flexsignal.core.StreamMeta`, in the pyomo/pint syntax flex-pse
 uses (`"m^3/hr"`, with `^`, not `**`). The values stay plain float64, so every library works on them unchanged.
 
-In M1, units are carried and checked, but not converted:
+Units are converted only where you ask, with pint (the `[units]` extra), and only then is pint imported:
 
-- `combine` refuses streams with different units unless you state the result's units.
-- A `range` bound given as `{"value": 50, "units": "m^3/hr"}` must use the stream's own units.
+- `convert_units` converts streams to other units, e.g. a meter's `L/s` to the model's `m^3/hr`. The values are
+  rescaled exactly, offset units such as `degC` and `K` included, and the flags are unchanged.
+- A `range` bound may be given in other units, e.g. `{"value": 25, "units": "L/s"}` on a stream in `m^3/hr`; it is
+  converted to the stream's units. Units that measure different things (`L/s` and `kW`) are an error.
+- `combine` still refuses streams with different units unless you state the result's units; convert them first.
 
-Conversion between units arrives with the `[units]` extra (M5).
+flex-pse converts the units of values it is given itself, so values handed to a model keep their own units.

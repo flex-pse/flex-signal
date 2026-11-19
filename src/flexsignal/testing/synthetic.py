@@ -1,7 +1,7 @@
 """Seeded, plant-like synthetic data with known injected faults.
 
-This is flex-signal's main source of test, example and benchmark data (PLAN.md
-§8, "Test data"). Every case keeps three things:
+This is flex-signal's main source of test, example and benchmark data. Every
+case keeps three things:
 
 - the underlying noise-free signal (``underlying``);
 - the fault-free measurement (``clean``: the signal plus sensor noise);
@@ -29,7 +29,7 @@ import pandas as pd
 
 from flexsignal.core.frame import SignalFrame
 
-__all__ = ["STREAMS", "SyntheticCase", "plant"]
+__all__ = ["STREAMS", "SyntheticCase", "abcd", "plant"]
 
 STREAMS: dict[str, dict[str, object]] = {
     "flow": {"units": "m^3/hr", "noise": 1.0},
@@ -39,6 +39,10 @@ STREAMS: dict[str, dict[str, object]] = {
     "reference_flow": {"units": "m^3/hr", "noise": 0.2},
 }
 """Streams :func:`plant` generates, with units and sensor-noise standard deviation."""
+
+
+_SHIFT_FAULTS = frozenset({"calibration", "drift", "step"})
+"""Fault kinds that shift values over a long stretch, rather than spoil samples."""
 
 
 @dataclass(frozen=True)
@@ -101,8 +105,15 @@ class SyntheticCase:
         return np.random.default_rng([self.seed, len(self.faults), salt])
 
     def _free_starts(self, stream: str, length: int, margin: int) -> np.ndarray:
-        """Start positions where a run of ``length`` fits clear of earlier faults."""
-        busy = self.any_fault(stream).to_numpy()
+        """Start positions where a run of ``length`` fits clear of earlier faults.
+
+        Faults that only shift values over a long stretch (calibration, drift,
+        step) don't block a new fault; anything else does.
+        """
+        busy = np.zeros(len(self.observed), dtype=bool)
+        for kind, mask in self.faults.items():
+            if kind not in _SHIFT_FAULTS:
+                busy |= mask[stream].to_numpy()
         n = len(busy)
         padded = (
             np.convolve(
@@ -263,7 +274,7 @@ def plant(
     - ``pump_on`` (0/1): 1, except in ``pump_off_periods`` random blocks of 2–6 h.
     - ``reference_flow`` (m^3/hr): a trusted, precise meter for the same flow. It
       reports only between ``reference_hours`` each day, and is NaN otherwise.
-      M2's ``calibrate`` uses it.
+      ``calibrate`` can use it to correct ``flow``.
 
     Args:
         start: First timestamp (UTC).
@@ -320,4 +331,133 @@ def plant(
         units=units,  # type: ignore[arg-type]
         noise=sigma,
         seed=seed,
+    )
+
+
+def _blocks(
+    rng: np.random.Generator,
+    periods: int,
+    count: int,
+    hours: tuple[float, float],
+    step_hours: float,
+) -> np.ndarray:
+    on = np.zeros(periods)
+    for _ in range(count):
+        length = int(rng.uniform(*hours) / step_hours)
+        begin = int(rng.integers(0, max(periods - length, 1)))
+        on[begin : begin + length] = 1.0
+    return on
+
+
+def abcd(
+    *,
+    start: str = "2025-01-06",
+    periods: int = 14 * 288,
+    freq: str = "5min",
+    seed: int = 0,
+    gain: float = 0.85,
+    offset: float = 6.0,
+    drift_per_day: float = 0.0,
+    reference_every: str = "6h",
+    reference_length: str = "1h",
+    c_blocks: int = 14,
+    d_blocks: int = 14,
+    reference_bias: float = 20.0,
+) -> SyntheticCase:
+    """Generate the A/B/C/D calibration problem.
+
+    The streams:
+
+    - ``A`` (m^3/hr): a meter that always reports but is miscalibrated. It reads
+      ``gain × true + offset``, plus ``drift_per_day`` per day since the start,
+      plus noise (standard deviation 1).
+    - ``B`` (m^3/hr): a precise reference meter for the same quantity (noise
+      0.3). It reports only for ``reference_length`` every ``reference_every``,
+      and is NaN otherwise. It can't be trusted while C or D is on: it reads
+      ``reference_bias`` too high while C is 1, and 0 while D is 1.
+    - ``C`` and ``D`` (0/1): two on/off regimes, each in random blocks of 1-4 h.
+
+    ``underlying["A"]`` is the true value that a corrected A should match.
+    Fault kinds: ``"calibration"`` (all of A), ``"drift"`` (A, if
+    ``drift_per_day``), ``"reference_bias"`` and ``"reference_off"`` (B).
+
+    Args:
+        start: First timestamp (UTC).
+        periods: Number of samples.
+        freq: Sample spacing.
+        seed: Seed for noise and the C and D blocks.
+        gain: A's gain error.
+        offset: A's offset error, in m^3/hr.
+        drift_per_day: How much A's offset grows per day.
+        reference_every: How often B starts reporting.
+        reference_length: How long B reports each time.
+        c_blocks: How many blocks C is on for.
+        d_blocks: How many blocks D is on for.
+        reference_bias: How far B reads too high while C is on.
+
+    Returns:
+        A :class:`SyntheticCase`. ``clean`` holds a correctly calibrated A and an
+        unbiased B.
+
+    Example:
+        >>> from flexsignal.testing import synthetic
+        >>> case = synthetic.abcd(seed=1)
+        >>> sorted(case.observed.columns)
+        ['A', 'B', 'C', 'D']
+    """
+    rng = np.random.default_rng([seed, 7])
+    index = pd.date_range(start, periods=periods, freq=freq, tz="UTC", name="time")
+    hours = (index - index[0]).total_seconds().to_numpy() / 3600.0
+    hour_of_day = index.hour.to_numpy() + index.minute.to_numpy() / 60.0
+    step_hours = pd.Timedelta(freq).total_seconds() / 3600.0
+
+    daily = np.sin(2 * np.pi * (hour_of_day - 9.0) / 24.0)
+    weekly = np.sin(2 * np.pi * hours / (24.0 * 7))
+    true = 100.0 + 30.0 * daily + 5.0 * weekly
+    c = _blocks(rng, periods, c_blocks, (1.0, 4.0), step_hours)
+    d = _blocks(rng, periods, d_blocks, (1.0, 4.0), step_hours)
+    every_h = pd.Timedelta(reference_every).total_seconds() / 3600.0
+    length_h = pd.Timedelta(reference_length).total_seconds() / 3600.0
+    reporting = np.mod(hours, every_h) < length_h - 1e-9
+
+    a_noise = rng.normal(0.0, 1.0, periods)
+    b_noise = rng.normal(0.0, 0.3, periods)
+    a_clean = true + a_noise
+    b_clean = np.where(reporting, true + b_noise, np.nan)
+    drift = drift_per_day * hours / 24.0
+    a_observed = gain * true + offset + drift + a_noise
+    b_observed = b_clean.copy()
+    biased = reporting & (c == 1)
+    off = reporting & (d == 1)
+    b_observed[biased] += reference_bias
+    b_observed[off] = 0.0
+
+    underlying = pd.DataFrame(
+        {"A": true, "B": np.where(reporting, true, np.nan), "C": c, "D": d},
+        index=index,
+    )
+    clean = pd.DataFrame({"A": a_clean, "B": b_clean, "C": c, "D": d}, index=index)
+    observed = pd.DataFrame(
+        {"A": a_observed, "B": b_observed, "C": c, "D": d}, index=index
+    )
+    none = np.zeros(periods, dtype=bool)
+
+    def mask(a: np.ndarray = none, b: np.ndarray = none) -> pd.DataFrame:
+        return pd.DataFrame({"A": a, "B": b, "C": none, "D": none}, index=index)
+
+    faults = {
+        "calibration": mask(a=np.ones(periods, dtype=bool)),
+        "reference_bias": mask(b=biased),
+        "reference_off": mask(b=off),
+    }
+    if drift_per_day:
+        faults["drift"] = mask(a=np.ones(periods, dtype=bool))
+    return SyntheticCase(
+        underlying=underlying,
+        clean=clean,
+        observed=observed,
+        units={"A": "m^3/hr", "B": "m^3/hr", "C": None, "D": None},
+        noise={"A": 1.0, "B": 0.3, "C": 0.0, "D": 0.0},
+        seed=seed,
+        faults=faults,
     )

@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 import flexsignal as fs
 from flexsignal.core import SignalConfigError, registered_steps
+from flexsignal.core.registry import own_steps
 from flexsignal.spec import (
     MIGRATIONS,
     SCHEMA_VERSION,
@@ -27,7 +28,7 @@ def _spec(steps=None, **kw):
 def test_examples_cover_every_registered_step_kind():
     covered = {s.kind for s in one_of_every_step()}
     assert covered == set(
-        registered_steps()
+        own_steps()
     ), "add an example of each new step kind to flexsignal.testing.examples"
 
 
@@ -194,4 +195,8 @@ def test_committed_json_schema_is_current():
         "`python -m flexsignal.spec.schema`"
     )
     schema = json.loads(schema_text())
-    assert set(schema["$defs"]) >= {cls.__name__ for cls in registered_steps().values()}
+    # Two classes with one name (impute.Regression, forecast.Regression) are keyed
+    # by their module path instead.
+    for cls in registered_steps().values():
+        qualified = f"{cls.__module__}.{cls.__name__}".replace(".", "__")
+        assert {cls.__name__, qualified} & set(schema["$defs"]), cls

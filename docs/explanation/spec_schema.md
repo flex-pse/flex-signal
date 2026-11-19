@@ -76,19 +76,26 @@ The full JSON Schema, generated from these models, is committed with the package
 {download}`signal_spec.schema.json <../../src/flexsignal/spec/schemas/signal_spec.schema.json>`. Editors can use
 it to validate and autocomplete specs.
 
-## Conditions can't run code
+## Specs can't run code
 
-Conditions in a spec (`keep_when`, `invalid_when`) can only read streams. When a spec is loaded, and again
-before a condition is evaluated, flex-signal parses it and accepts only:
+Loading and running a spec never imports or executes code named in it.
+
+**Conditions and formulas** (`keep_when`, `invalid_when`, `fit_when`, `apply_when`, `formula`) can only read
+streams. When a spec is loaded, and again before an expression is evaluated, flex-signal parses it and accepts
+only:
 
 - stream names (in backticks if they aren't Python identifiers), numbers, `True` and `False`;
 - arithmetic (`+ - * / // % **`; the exponent after `**` must be a number no larger than 100);
 - comparisons (`== != < <= > >=`, chained like `0 < flow <= 50`) and `and or not & | ~`;
-- the math functions in {data}`~flexsignal.core.CONDITION_FUNCTIONS`, such as `abs(x)` and `sqrt(x)`.
+- the math functions in {data}`~flexsignal.core.CONDITION_FUNCTIONS`, such as `abs(x)` and `sqrt(x)`;
+- in conditions, the helpers `held`, `valid`, `is_raw` and `flagged` ([Conditions](conditions.md)).
 
-Anything else is refused with an error naming the spec field, before pandas sees the expression. That covers
-attribute access (`flow.__class__`), indexing, strings, other functions, keyword arguments, `@` variables and
-`lambda`. pandas `eval` is not a security boundary on its own; this check is.
+Anything else is refused with an error naming the spec field. That covers attribute access (`flow.__class__`),
+indexing, other strings, other functions, keyword arguments, `@` variables and `lambda`. flex-signal then
+evaluates the parsed expression itself with numpy; it never calls `eval` or `pandas.eval`.
+
+**Models** (`calibrate` and `regression` `model`) must be one of the listed keys, such as
+`sklearn:HuberRegressor`. A spec can't name another class, such as `subprocess:run`.
 
 ```{warning}
 Conditions are safe, but a spec still names **files**: `$source` references, `csv` and `parquet` inputs, and

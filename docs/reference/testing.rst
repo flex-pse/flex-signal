@@ -8,6 +8,8 @@ Synthetic test data
 
 .. autofunction:: plant
 
+.. autofunction:: abcd
+
 .. autoclass:: SyntheticCase
    :members:
 

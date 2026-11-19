@@ -6,6 +6,17 @@ backend
   algorithm in an existing library. It converts flex-signal's data into the shape that library expects, and back
   again, keeping the time index.
 
+benchmark (imputer)
+  A test that hides known values as gaps of a chosen length, lets an imputer fill them, and scores the fill
+  against what was hidden. See {func}`flexsignal.eval.benchmark_imputers`.
+
+condition
+  A short expression over stream names that gives True or False per row, such as `"C == 0 and B > 0"`. Used by
+  `keep_when`, `invalid_when`, `fit_when` and `apply_when`. See [Conditions](../explanation/conditions.md).
+
+gap
+  A run of missing values in one stream. Its length is the time between the valid samples either side of it.
+
 input slot
   A named input in a spec, such as `historian`. The caller binds data to it at run time, so a pipeline does no
   I/O of its own.
@@ -28,4 +39,11 @@ SignalSpec
 step
   One operation in a pipeline, such as `align`, `hampel`, `calibrate`, `interpolate` or `forecast`, identified in
   a spec by its `kind`.
+
+tier
+  One stage of a `tiered` imputer: a method for gaps up to a given length.
+
+trusted rows
+  In `calibrate`, the rows where the reference has a value and `fit_when` holds. The model is fitted on them, and
+  with `prefer_reference` they take the reference's own value.
 ```

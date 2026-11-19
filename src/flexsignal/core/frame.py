@@ -282,7 +282,13 @@ class SignalFrame:
         index = df.index
         if not isinstance(index, pd.DatetimeIndex):
             try:
-                index = pd.DatetimeIndex(pd.to_datetime(index))
+                # pandas warns before failing on text it can't infer a format
+                # for; the error below says it better.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore", message="Could not infer format", category=UserWarning
+                    )
+                    index = pd.DatetimeIndex(pd.to_datetime(index))
             except (TypeError, ValueError) as exc:
                 raise SignalDataError(
                     "the index could not be parsed as timestamps. Pass time_column= to "

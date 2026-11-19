@@ -31,6 +31,6 @@ ignore:
 
 codecov:
   notify:
-    after_n_builds: 1 # the single coverage upload from ci.yml unit-tests
+    after_n_builds: 1 # the single coverage upload, from ci.yml's extras job
     wait_for_ci: false
   require_ci_to_pass: false

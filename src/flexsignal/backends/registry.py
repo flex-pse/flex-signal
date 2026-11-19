@@ -5,10 +5,12 @@ or ``"sklearn:HuberRegressor"``. The target is imported only when the key is
 used, so an optional library costs nothing until a step needs it. If the library
 is missing, the error says which extra installs it.
 
-Besides registered keys, any ``"package.module:attribute"`` string resolves
-directly, which is how user code plugs in. Third-party packages register keys
-through the ``flexsignal.backends`` entry-point group. Each entry point names a
-callable that is called with no arguments and registers its keys.
+flex-signal's own keys live in :mod:`flexsignal.backends.builtin`, which the
+registry loads the first time it is used. Besides registered keys, any
+``"package.module:attribute"`` string resolves directly in Python, which is how
+user code plugs in. Third-party packages register keys through the
+``flexsignal.backends`` entry-point group. Each entry point names a callable
+that is called with no arguments and registers its keys.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ class BackendInfo:
 
 
 _BACKENDS: dict[str, BackendInfo] = {}
+_builtins_loaded = False
 _entry_points_loaded = False
 
 
@@ -67,6 +70,7 @@ def register_backend(
     Raises:
         SignalBackendError: If ``key`` is already registered with another target.
     """
+    _load_builtins()
     info = BackendInfo(key, target, extra, description, docs_url)
     existing = _BACKENDS.get(key)
     if existing is not None and existing.target != target:
@@ -76,6 +80,15 @@ def register_backend(
         )
     _BACKENDS[key] = info
     return info
+
+
+def _load_builtins() -> None:
+    """Register flex-signal's own keys (see :mod:`flexsignal.backends.builtin`)."""
+    global _builtins_loaded
+    if _builtins_loaded:
+        return
+    _builtins_loaded = True
+    importlib.import_module("flexsignal.backends.builtin")
 
 
 def _load_entry_points() -> None:
@@ -108,6 +121,7 @@ def get_backend(key: str) -> Any:
     Raises:
         SignalBackendError: If the key is unknown, or its library is not installed.
     """
+    _load_builtins()
     if key not in _BACKENDS:
         _load_entry_points()
     info = _BACKENDS.get(key)
@@ -139,5 +153,6 @@ def get_backend(key: str) -> Any:
 
 def registered_backends() -> list[BackendInfo]:
     """Return every registered backend, sorted by key."""
+    _load_builtins()
     _load_entry_points()
     return [_BACKENDS[k] for k in sorted(_BACKENDS)]

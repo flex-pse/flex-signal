@@ -17,6 +17,14 @@ code actually registers.
 ``.. flexsignal-backend-table::``
     Every registered backend key, what it resolves to, and its extra.
 
+``.. flexsignal-model-table::``
+    The adapters whose model option takes any of a library's models: the
+    tested ones, and where to find the rest.
+
+``.. flexsignal-method-table:: clean|impute|forecast``
+    The included methods of one group: name, ``fs.`` call (linked to its API
+    reference), JSON kind, extra, and links to the library docs.
+
 Each directive wraps a plain ``collect_*`` function with no Sphinx dependency,
 so ``tests/test_docs.py`` can test the collection logic directly.
 """
@@ -34,7 +42,9 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 import flexsignal  # noqa: F401  (registers the built-in steps)
+from flexsignal.adapters._common import MODEL_OPTIONS
 from flexsignal.backends import registered_backends
+from flexsignal.backends.models import registered_models
 from flexsignal.core import FLAG_DESCRIPTIONS
 from flexsignal.core.registry import registered_steps
 from flexsignal.spec import StepSpec
@@ -67,7 +77,23 @@ def _type_name(annotation) -> str:
 def collect_step_rows() -> list[list[str]]:
     """Return ``[kind, group, class, learns state, summary]`` per registered step."""
     rows = []
+    groups = {"cleaner": "clean", "imputer": "impute", "forecaster": "forecast"}
     for kind, cls in registered_steps().items():
+        method = getattr(cls, "registered", None)
+        if method is not None:
+            # A registered method (an adapter, or a user's): marked as such, and
+            # pointing at the function behind it.
+            source = f"{method.source['module']}.{method.source['function']}"
+            rows.append(
+                [
+                    f"``{kind}``",
+                    groups[method.role],
+                    f"registered: ``{source}``",
+                    "yes" if method.fit is not None else "no",
+                    _first_line(cls.__doc__),
+                ]
+            )
+            continue
         group = cls.__module__.rsplit(".", 1)[-1]
         stateful = "yes" if cls.fit is not StepSpec.fit else "no"
         rows.append(
@@ -123,6 +149,166 @@ def collect_backend_rows() -> list[list[str]]:
             else f"``{info.target}``"
         )
         rows.append([f"``{info.key}``", target, info.extra or "core", info.description])
+    for name, description in registered_models().items():
+        rows.append([f"``{name}``", "registered model", "—", description])
+    return rows
+
+
+# The included methods, by group: a readable name, and the backend keys of the
+# library functions each calls ("pyod:*" means every registered pyod key; an
+# empty tuple means flex-signal implements it itself). The upstream links come
+# from the backend registry, so they are written once. test_docs checks that
+# every cleaner, imputer and forecaster flex-signal ships is listed here.
+_LINEAR = "linear models"
+METHODS: dict[str, dict[str, tuple[str, tuple[str, ...]]]] = {
+    "clean": {
+        "range": ("Range check", ()),
+        "rate_of_change": ("Rate-of-change check", ()),
+        "stuck": ("Stuck-sensor check", ()),
+        "hampel": ("Hampel filter", ()),
+        "tukey": ("Tukey's fences", ()),
+        "expression": ("Rule written as an expression", ()),
+        "filter": (
+            "Smoothing: Savitzky-Golay, Butterworth or median",
+            ("scipy:savgol_filter", "scipy:butter", "scipy:sosfiltfilt"),
+        ),
+        "detotalize": ("Running total to rate", ()),
+        "PyodDetector": ("Outlier detectors (pyod)", ("pyod:*",)),
+        "RupturesChangepoint": (
+            "Level glitches between change points",
+            ("ruptures:*",),
+        ),
+        "StumpyDiscord": ("Matrix-profile discords", ("stumpy:*",)),
+    },
+    "impute": {
+        "interpolate": (
+            "Interpolation: linear, nearest, previous, PCHIP or Akima",
+            (
+                "numpy:interp",
+                "scipy:interp1d",
+                "scipy:PchipInterpolator",
+                "scipy:Akima1DInterpolator",
+            ),
+        ),
+        "kalman": (
+            "Kalman smoother of a structural model",
+            ("statsmodels:UnobservedComponents",),
+        ),
+        "regression": ("Regression on other streams and time features", (_LINEAR,)),
+        "knn": ("k-nearest neighbours", ("sklearn:KNNImputer",)),
+        "iterative": ("Iterative, MICE-style", ("sklearn:IterativeImputer",)),
+        "tiered": ("Tiered by gap length (routes to the others)", ()),
+        "PypotsImpute": (
+            "Deep imputation: SAITS, BRITS, CSDI, TimesNet",
+            ("pypots:imputation.*",),
+        ),
+    },
+    "forecast": {
+        "forecast_persistence": ("Persistence", ()),
+        "forecast_seasonal_naive": ("Seasonal naive", ()),
+        "forecast_structural": (
+            "Structural time-series model",
+            ("statsmodels:UnobservedComponents",),
+        ),
+        "forecast_regression": ("Regression on cycles, exog and lags", (_LINEAR,)),
+        "ChronosForecast": (
+            "Chronos-2, zero-shot (or TimesFM 2.5)",
+            ("chronos:*", "timesfm:*"),
+        ),
+        "T0Forecast": ("t0-alpha, zero-shot", ("t0:*",)),
+        "PypotsForecast": ("Deep forecasting (PyPOTS)", ("pypots:forecasting.*",)),
+        "NeuralforecastForecast": (
+            "Deep forecasting (neuralforecast)",
+            ("neuralforecast:*",),
+        ),
+        "DartsForecast": ("darts models", ("darts:*",)),
+        "SktimeForecast": ("sktime forecasters", ("sktime:*",)),
+    },
+}
+
+
+def method_group(cls) -> str | None:
+    """Return ``clean``, ``impute`` or ``forecast`` for a method's step class."""
+    method = getattr(cls, "registered", None)
+    if method is not None:
+        return {"cleaner": "clean", "imputer": "impute", "forecaster": "forecast"}[
+            method.role
+        ]
+    group = cls.__module__.rsplit(".", 1)[-1]
+    return group if group in METHODS else None
+
+
+def _backend_keys(pattern: str) -> list[str]:
+    from flexsignal.backends.models import LINEAR_MODELS
+
+    keys = [info.key for info in registered_backends()]
+    if pattern == _LINEAR:
+        return [k for k in LINEAR_MODELS if k in keys]
+    if pattern.endswith("*"):
+        return [k for k in keys if k.startswith(pattern[:-1])]
+    return [pattern] if pattern in keys else []
+
+
+def collect_method_rows(group: str) -> list[list[str]]:
+    """Return ``[method, call, kind, extra, library]`` per method in a group."""
+    backends = {info.key: info for info in registered_backends()}
+    steps = registered_steps()
+    rows = []
+    for kind, (name, patterns) in METHODS[group].items():
+        cls = steps[kind]
+        if getattr(cls, "registered", None) is not None:
+            call = f":class:`fs.{group}.{kind} <flexsignal.steps.{group}.{kind}>`"
+        else:
+            call = (
+                f":class:`fs.{group}.{cls.__qualname__} "
+                f"<{cls.__module__}.{cls.__qualname__}>`"
+            )
+        keys = [k for p in patterns for k in _backend_keys(p)]
+        extras = sorted({backends[k].extra for k in keys if backends[k].extra})
+        by_library: dict[str, list[str]] = {}
+        for key in keys:
+            library, _, member = key.partition(":")
+            info = backends[key]
+            label = member.split(".")[-1] or library
+            link = f"`{label} <{info.docs_url}>`__" if info.docs_url else label
+            by_library.setdefault(library, []).append(link)
+        library = (
+            "; ".join(f"{lib}: {', '.join(links)}" for lib, links in by_library.items())
+            or "flex-signal (no external library)"
+        )
+        rows.append(
+            [
+                name,
+                call,
+                f"``{kind}``",
+                ", ".join(f"``[{e}]``" for e in extras) or "core",
+                library,
+            ]
+        )
+    return rows
+
+
+def collect_model_rows() -> list[list[str]]:
+    """Return ``[call, option, tested, other models, note]`` per adapter option."""
+    steps = registered_steps()
+    groups = {"cleaner": "clean", "imputer": "impute", "forecaster": "forecast"}
+    rows = []
+    for option in MODEL_OPTIONS:
+        group = groups[steps[option.method].registered.role]
+        call = (
+            f":class:`fs.{group}.{option.method} "
+            f"<flexsignal.steps.{group}.{option.method}>`"
+        )
+        rows.append(
+            [
+                call,
+                f"``{option.option}``",
+                ", ".join(f"``{name}``" for name in option.tested),
+                f"`every {option.library} model <{option.catalogue}>`__, by class "
+                f"name; settings in ``{option.params}``",
+                option.note,
+            ]
+        )
     return rows
 
 
@@ -185,8 +371,32 @@ class BackendTable(_TableDirective):
         return self._render(_list_table(header, collect_backend_rows(), "22 34 8 36"))
 
 
+class MethodTable(_TableDirective):
+    """``.. flexsignal-method-table:: clean|impute|forecast``"""
+
+    required_arguments = 1
+
+    def run(self):
+        """Render one group's included methods."""
+        header = ["method", "flex-signal call", "JSON kind", "extra", "library docs"]
+        rows = collect_method_rows(self.arguments[0])
+        return self._render(_list_table(header, rows, "24 22 16 10 28"))
+
+
+class ModelTable(_TableDirective):
+    """``.. flexsignal-model-table::``"""
+
+    def run(self):
+        """Render the adapters' model options."""
+        header = ["step", "option", "tested", "other models", "note"]
+        rows = collect_model_rows()
+        return self._render(_list_table(header, rows, "20 10 26 24 20"))
+
+
 def setup(app):
     """Register the flex-signal directives."""
+    app.add_directive("flexsignal-model-table", ModelTable)
+    app.add_directive("flexsignal-method-table", MethodTable)
     app.add_directive("flexsignal-step-table", StepTable)
     app.add_directive("flexsignal-spec-table", SpecTable)
     app.add_directive("flexsignal-flag-table", FlagTable)

@@ -19,11 +19,15 @@ _STEPS: dict[str, type] = {}
 _entry_points_loaded = False
 
 
-def register_step(cls: type) -> type:
+def register_step(cls: type, *, replace: bool = False) -> type:
     """Register a step class under its ``kind``; usable as a class decorator.
 
     Args:
         cls: A step class whose ``kind`` field has a string default.
+        replace: Replace a class already registered for the kind instead of
+            raising. :func:`flexsignal.register_cleaner` and its siblings use it
+            when the same function is registered again, e.g. by a re-run
+            notebook cell.
 
     Returns:
         ``cls`` unchanged.
@@ -39,7 +43,7 @@ def register_step(cls: type) -> type:
             "default, e.g. kind: Literal['my_step'] = 'my_step'."
         )
     existing = _STEPS.get(kind)
-    if existing is not None and existing is not cls:
+    if existing is not None and existing is not cls and not replace:
         raise SignalConfigError(
             f"step kind {kind!r} is already registered by "
             f"{existing.__module__}.{existing.__qualname__}; pick a different kind."
@@ -71,12 +75,50 @@ def get_step_class(kind: str) -> type:
         return _STEPS[kind]
     except KeyError:
         known = ", ".join(sorted(_STEPS))
+        if not kind.isidentifier():
+            raise SignalConfigError(
+                f"unknown step kind {kind!r}. A spec names a step by its kind, e.g. "
+                "hampel, or a registered method's name, never an import path: "
+                "register the method in code first (fs.register_cleaner and its "
+                f"siblings). Known kinds: {known}.",
+                value=kind,
+            ) from None
         raise SignalConfigError(
-            f"unknown step kind {kind!r}. Known kinds: {known}. A step from another "
-            f"package must be installed and registered through the "
-            f"{STEP_ENTRY_POINT_GROUP!r} entry-point group.",
+            f"unknown step kind {kind!r}; register it first, e.g. "
+            f"fs.register_imputer({kind!r}, fn) (or register_cleaner or "
+            "register_forecaster), or install the package that provides it. "
+            f"Known kinds: {known}.",
             value=kind,
         ) from None
+
+
+def own_steps() -> dict[str, type]:
+    """Return flex-signal's own steps: built in, or its adapters' registered methods.
+
+    Steps from users, other packages and test modules are left out. This is what
+    the committed JSON Schema and the reference tables describe.
+    """
+    return {
+        kind: cls
+        for kind, cls in registered_steps().items()
+        if cls.__module__.split(".")[0] == "flexsignal"
+        and ".tests" not in cls.__module__
+    }
+
+
+def find_step(kind: str) -> type | None:
+    """Return the class registered for ``kind``, or None, without loading plugins."""
+    return _STEPS.get(kind)
+
+
+def unregister_step(kind: str) -> None:
+    """Remove a registered kind if it is registered (for tests and notebooks)."""
+    _STEPS.pop(kind, None)
+
+
+def load_entry_points() -> None:
+    """Load the steps that installed packages provide, once."""
+    _load_entry_points()
 
 
 def registered_steps() -> dict[str, type]:

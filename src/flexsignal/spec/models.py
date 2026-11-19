@@ -241,6 +241,14 @@ class SignalSpec(StrictModel):
     )
     name: str = Field(description="Name of the pipeline.")
     description: str | None = Field(None, description="What the pipeline is for.")
+    requires: tuple[str, ...] = Field(
+        (),
+        description=(
+            "Modules that register the methods this spec uses, e.g. myplant.methods. "
+            "Only a hint for error messages: flex-signal never imports them. Load "
+            "them with fs.load_plugins or plugins=."
+        ),
+    )
     inputs: tuple[InputSpec, ...] = Field(
         (),
         description=(

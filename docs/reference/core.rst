@@ -46,6 +46,13 @@ Conditions
 .. autodata:: CONDITION_FUNCTIONS
    :no-value:
 
+.. autodata:: CONDITION_HELPERS
+   :no-value:
+
+.. autofunction:: evaluate_formula
+
+.. autofunction:: check_formula
+
 Errors
 ------
 
@@ -69,3 +76,17 @@ The step registry
 .. autofunction:: get_step_class
 
 .. autofunction:: registered_steps
+
+.. autofunction:: own_steps
+
+.. autofunction:: find_step
+
+.. autofunction:: unregister_step
+
+Units
+-----
+
+.. automodule:: flexsignal.core.units
+   :no-members:
+
+.. autofunction:: flexsignal.core.units.convert

@@ -13,6 +13,8 @@ touch flex-pse or Acquirium. ``lint-imports`` enforces both rules.
 
    pipeline
    steps
+   eval
+   handoff
    spec
    core
    io_backends

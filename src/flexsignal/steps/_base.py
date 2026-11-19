@@ -73,6 +73,63 @@ def regular_step(index: pd.DatetimeIndex, *, kind: str) -> pd.Timedelta:
     return pd.Timedelta(int(diffs[0]), unit="ns")
 
 
+def gaps_to_fill(
+    values: np.ndarray,
+    flags: np.ndarray,
+    t: np.ndarray,
+    max_gap_s: float | None,
+) -> np.ndarray:
+    """Return where an imputer may fill: gaps no longer than ``max_gap_s``.
+
+    A gap is a run of missing values. Its length is the time between the valid
+    sample before it and the valid sample after it, so a gap at the start or end
+    of the data has no length and is filled only when ``max_gap_s`` is None.
+    Values flagged ``EXCLUDED`` or ``NO_SAMPLE`` are never filled.
+
+    Args:
+        values: One stream's values.
+        flags: Its flags.
+        t: Timestamps in seconds (see :func:`seconds`).
+        max_gap_s: Longest gap to fill, in seconds; None for any length.
+
+    Returns:
+        A boolean array, True where a value may be filled.
+    """
+    valid = ~np.isnan(values)
+    excluded = (flags.astype("int64") & int(Flag.EXCLUDED | Flag.NO_SAMPLE)) != 0
+    fill = ~valid & ~excluded
+    if max_gap_s is None or not fill.any():
+        return fill
+    n = len(values)
+    positions = np.arange(n)
+    prev_idx = np.maximum.accumulate(np.where(valid, positions, -1))
+    next_idx = np.minimum.accumulate(np.where(valid, positions, n)[::-1])[::-1]
+    interior = (prev_idx >= 0) & (next_idx < n)
+    span = np.full(n, np.inf)
+    span[interior] = t[next_idx[interior]] - t[prev_idx[interior]]
+    return fill & (span <= max_gap_s)
+
+
+def fourier_terms(
+    index: pd.DatetimeIndex, terms: Sequence[tuple[pd.Timedelta, int]]
+) -> np.ndarray:
+    """Return sine and cosine columns for each ``(period, harmonics)`` term.
+
+    The phase is measured from the Unix epoch, so the same timestamp always gets
+    the same values, whatever data it sits in.
+
+    Returns:
+        An array of shape ``(len(index), 2 * total_harmonics)``.
+    """
+    ns = index.asi8.astype("float64")
+    columns = []
+    for period, harmonics in terms:
+        phase = 2 * np.pi * ns / float(period.value)
+        for k in range(1, harmonics + 1):
+            columns += [np.sin(k * phase), np.cos(k * phase)]
+    return np.column_stack(columns) if columns else np.empty((len(index), 0))
+
+
 def seconds(index: pd.DatetimeIndex) -> np.ndarray:
     """Return the index as float seconds from its first timestamp."""
     ns = index.asi8
