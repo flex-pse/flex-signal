@@ -1,0 +1,424 @@
+{
+  "description": "One of every step kind, frozen with the schema.",
+  "inputs": [
+    {
+      "kind": "frame",
+      "name": "historian"
+    },
+    {
+      "kind": "parquet",
+      "name": "lab",
+      "path": "lab.parquet"
+    }
+  ],
+  "metadata": {
+    "owner": "process team",
+    "site": "demo"
+  },
+  "name": "every_step",
+  "outputs": [
+    {
+      "kind": "parquet",
+      "path": "clean.parquet"
+    },
+    {
+      "include_flags": true,
+      "kind": "csv",
+      "path": "clean.csv"
+    }
+  ],
+  "requires": [
+    "myplant.methods"
+  ],
+  "schema_version": "0.1.0",
+  "steps": [
+    {
+      "freq": "5min",
+      "how": "inner",
+      "kind": "align",
+      "method": "linear"
+    },
+    {
+      "agg": "median",
+      "freq": "15min",
+      "kind": "resample",
+      "min_count": 2,
+      "name": "to_15min"
+    },
+    {
+      "end": "2025-01-08T12:00:00Z",
+      "kind": "window",
+      "start": "2025-01-06"
+    },
+    {
+      "keep_when": "pump_on == 1",
+      "kind": "mask",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "kind": "rename",
+      "mapping": {
+        "temperature": "temp"
+      }
+    },
+    {
+      "kind": "convert_units",
+      "streams": [
+        "flow"
+      ],
+      "to": "L/s"
+    },
+    {
+      "factor": 100.0,
+      "kind": "scale",
+      "streams": [
+        "pressure"
+      ],
+      "units": "kPa"
+    },
+    {
+      "kind": "combine",
+      "output": "flow_best",
+      "streams": [
+        "reference_flow",
+        "flow"
+      ]
+    },
+    {
+      "by": "-15min",
+      "kind": "shift",
+      "streams": [
+        "pressure"
+      ]
+    },
+    {
+      "kind": "range",
+      "max": {
+        "units": "m^3/hr",
+        "value": 500.0
+      },
+      "min": 0.0,
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "kind": "rate_of_change",
+      "max_rate": 200.0,
+      "reset_after": 4,
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "exclude_values": [
+        0.0
+      ],
+      "kind": "stuck",
+      "min_duration": "1h",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "kind": "hampel",
+      "n_sigma": 6.0,
+      "streams": [
+        "flow",
+        "pressure"
+      ],
+      "window": "1h"
+    },
+    {
+      "k": 3.0,
+      "kind": "tukey",
+      "streams": [
+        "pressure"
+      ]
+    },
+    {
+      "flag": "OUT_OF_RANGE",
+      "invalid_when": "pressure < 0",
+      "kind": "expression",
+      "streams": [
+        "pressure"
+      ]
+    },
+    {
+      "kind": "filter",
+      "method": "savgol",
+      "polyorder": 3,
+      "streams": [
+        "temperature"
+      ],
+      "window": "1h"
+    },
+    {
+      "kind": "detotalize",
+      "per": "1min",
+      "rollover": 1000000.0,
+      "streams": [
+        "pressure"
+      ],
+      "units": "bar/min"
+    },
+    {
+      "apply_when": "not flagged(flow, 'STUCK')",
+      "features": [
+        "flow",
+        "temperature"
+      ],
+      "fit_when": "pump_on == 1 and held(pump_on == 1, '30min')",
+      "kind": "calibrate",
+      "mode": "residual",
+      "model": "sklearn:HuberRegressor",
+      "output": "flow_cal",
+      "params": {
+        "epsilon": 1.5
+      },
+      "reference": "reference_flow",
+      "refit": {
+        "every": "12h",
+        "min_rows": 20,
+        "rolling": "2D"
+      },
+      "target": "flow"
+    },
+    {
+      "kind": "interpolate",
+      "max_gap": "15min",
+      "method": "pchip",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "kind": "kalman",
+      "level": "local_linear_trend",
+      "seasonal": [
+        {
+          "period": "1D"
+        }
+      ],
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "features": [
+        "pressure"
+      ],
+      "fourier": [
+        {
+          "harmonics": 2,
+          "period": "1D"
+        }
+      ],
+      "kind": "regression",
+      "lags": [
+        "5min"
+      ],
+      "max_gap": "6h",
+      "model": "statsmodels:OLS",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "features": [
+        "pressure"
+      ],
+      "kind": "knn",
+      "n_neighbors": 3,
+      "streams": [
+        "flow"
+      ],
+      "weights": "distance"
+    },
+    {
+      "features": [
+        "pressure"
+      ],
+      "kind": "iterative",
+      "max_iter": 5,
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "kind": "tiered",
+      "streams": [
+        "flow"
+      ],
+      "tiers": [
+        {
+          "max_gap": "15min",
+          "method": "interpolate"
+        },
+        {
+          "max_gap": null,
+          "method": "regression",
+          "options": {
+            "features": [
+              "pressure"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "horizon": "1h",
+      "kind": "forecast_persistence",
+      "quantiles": [
+        0.1,
+        0.9
+      ],
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "horizon": "6h",
+      "issue_time": "2025-01-08T00:00:00Z",
+      "kind": "forecast_seasonal_naive",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "autoregressive": 1,
+      "exog": [
+        "temperature"
+      ],
+      "horizon": "6h",
+      "kind": "forecast_structural",
+      "level": "local_linear_trend",
+      "quantiles": [
+        0.05,
+        0.5,
+        0.95
+      ],
+      "seasonal": [
+        {
+          "harmonics": 2,
+          "period": "1D"
+        }
+      ],
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "exog": [
+        "temperature"
+      ],
+      "fourier": [
+        {
+          "harmonics": 2,
+          "period": "1D"
+        }
+      ],
+      "horizon": "1h",
+      "kind": "forecast_regression",
+      "lags": [
+        "5min",
+        "1D"
+      ],
+      "model": "statsmodels:OLS",
+      "name": "flow_ahead",
+      "past": [
+        "pressure"
+      ],
+      "past_lags": [
+        "1h"
+      ],
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "contamination": 0.02,
+      "kind": "PyodDetector",
+      "model": "ECOD",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "kind": "RupturesChangepoint",
+      "max_segment": "1h",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "k": 8.0,
+      "kind": "StumpyDiscord",
+      "streams": [
+        "flow"
+      ],
+      "window": "2h"
+    },
+    {
+      "features": [
+        "pressure"
+      ],
+      "kind": "PypotsImpute",
+      "max_gap": "6h",
+      "model": "BRITS",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "horizon": "6h",
+      "kind": "PypotsForecast",
+      "model": "TimesNet",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "context": "7D",
+      "horizon": "1D",
+      "kind": "ChronosForecast",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "context": "7D",
+      "horizon": "1D",
+      "kind": "T0Forecast",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "horizon": "1D",
+      "kind": "NeuralforecastForecast",
+      "model": "MLP",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "horizon": "1D",
+      "kind": "DartsForecast",
+      "model": "Theta",
+      "streams": [
+        "flow"
+      ]
+    },
+    {
+      "horizon": "1D",
+      "kind": "SktimeForecast",
+      "model": "AutoETS",
+      "streams": [
+        "flow"
+      ]
+    }
+  ]
+}

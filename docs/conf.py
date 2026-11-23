@@ -52,7 +52,7 @@ autodoc_class_signature = "separated"
 autodoc_member_order = "bysource"
 
 # Optional backends are mocked so the docs build needs only the [docs] extra.
-# Add a module here when the backend that imports it lands (PLAN.md §7).
+# Add a module here when the backend that imports it lands.
 autodoc_mock_imports: list[str] = []
 
 intersphinx_mapping = {

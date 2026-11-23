@@ -22,13 +22,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from flexsignal.core.exceptions import SignalDataError
-from flexsignal.core.frame import FLAGS_SUFFIX, INDEX_NAME, SignalFrame
+from flexsignal.core.frame import FLAGS_SUFFIX, SignalFrame, _with_time_index
 
 METADATA_KEY = b"flexsignal"
 """Arrow schema-metadata key holding flex-signal's stream metadata and provenance."""
 
 FORMAT_VERSION = 1
-"""Version of the Parquet metadata layout."""
+"""Version of the Parquet metadata layout. Files from a newer version are refused."""
+
+CSV_TIME_COLUMN = "timestamp"
+"""Name of the time column :func:`write_csv` writes."""
 
 
 def _split_flags(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame | None]:
@@ -44,6 +47,29 @@ def _split_flags(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     values = df.drop(columns=flag_cols)
     flags = df[flag_cols].set_axis(streams, axis=1)[list(values.columns)]
     return values, flags
+
+
+def _to_signal_frame(
+    df: pd.DataFrame,
+    *,
+    time_column: str | None,
+    timezone: str | None,
+    meta: Mapping[str, Any],
+    history: Any = (),
+    iso: bool = False,
+) -> SignalFrame:
+    """Build one SignalFrame from a flat table of values and ``__flags`` columns.
+
+    The time index is set (and made UTC) first, then values and flags are split
+    and passed to a single SignalFrame, which sorts them together.
+    """
+    df = _with_time_index(df, timezone=timezone, time_column=time_column, iso=iso)
+    values, flags = _split_flags(df)
+    return SignalFrame(values, flags, meta, history)
+
+
+def _units_meta(units: Mapping[str, str] | None) -> dict[str, dict[str, Any]]:
+    return {name: {"units": unit} for name, unit in (units or {}).items()}
 
 
 def write_parquet(sf: SignalFrame, path: str | Path) -> Path:
@@ -91,7 +117,8 @@ def read_parquet(
         The SignalFrame.
 
     Raises:
-        SignalDataError: If the file has no usable time index.
+        SignalDataError: If the file has no usable time index, or was written by
+            a newer flex-signal whose metadata layout this release can't read.
     """
     path = Path(path)
     if not path.exists():
@@ -100,19 +127,32 @@ def read_parquet(
     raw = (table.schema.metadata or {}).get(METADATA_KEY)
     df = table.to_pandas()
     if raw is None:
-        values, flags = _split_flags(df)
-        sf = SignalFrame.from_frame(
-            values, units=units, timezone=timezone, time_column=time_column
+        return _to_signal_frame(
+            df, time_column=time_column, timezone=timezone, meta=_units_meta(units)
         )
-        if flags is not None:
-            sf = SignalFrame(sf.values, flags.set_axis(values.index), sf.meta)
-        return sf
     info: dict[str, Any] = json.loads(raw)
-    values, flags = _split_flags(df)
+    version = info.get("format_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise SignalDataError(
+            f"{path.name} has flex-signal metadata with an unreadable format_version "
+            f"({version!r}). Rewrite the file with write_parquet."
+        )
+    if version > FORMAT_VERSION:
+        raise SignalDataError(
+            f"{path.name} was written by a newer flex-signal (Parquet format_version "
+            f"{version}); this release reads up to {FORMAT_VERSION}. Upgrade "
+            "flex-signal to read it."
+        )
     meta = info.get("streams", {})
     for name, unit in (units or {}).items():
         meta.setdefault(name, {})["units"] = unit
-    return SignalFrame(values, flags, meta, info.get("history", ()))
+    return _to_signal_frame(
+        df,
+        time_column=time_column,
+        timezone=timezone,
+        meta=meta,
+        history=info.get("history", ()),
+    )
 
 
 def write_csv(
@@ -127,19 +167,30 @@ def write_csv(
 
     Returns:
         The path written.
+
+    Raises:
+        SignalDataError: If a stream is named ``timestamp``, the name of the
+            file's time column.
     """
+    if CSV_TIME_COLUMN in sf.columns:
+        raise SignalDataError(
+            f"a stream is named {CSV_TIME_COLUMN!r}, the name of the CSV's time "
+            f"column, so it would read back as '{CSV_TIME_COLUMN}.1'. Rename the "
+            "stream before writing, or write Parquet, which keeps any name.",
+            field=CSV_TIME_COLUMN,
+        )
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     df = sf.to_pandas(include_flags=include_flags)
     df.index = df.index.map(lambda ts: ts.isoformat())
-    df.to_csv(path, index_label="timestamp", lineterminator="\n")
+    df.to_csv(path, index_label=CSV_TIME_COLUMN, lineterminator="\n")
     return path
 
 
 def read_csv(
     path: str | Path,
     *,
-    time_column: str = "timestamp",
+    time_column: str = CSV_TIME_COLUMN,
     timezone: str | None = None,
     units: Mapping[str, str] | None = None,
 ) -> SignalFrame:
@@ -158,8 +209,10 @@ def read_csv(
         The SignalFrame.
 
     Raises:
-        SignalDataError: If the file or the time column is missing, or naive
-            timestamps fall in a daylight-saving change.
+        SignalDataError: If the file or the time column is missing, the
+            timestamps can't be parsed, or naive timestamps fall in a
+            daylight-saving change. Timestamps with UTC offsets that change
+            (e.g. ``-08:00`` then ``-07:00`` across DST) are fine.
     """
     path = Path(path)
     if not path.exists():
@@ -171,10 +224,10 @@ def read_csv(
             f"{list(df.columns)}. "
             "Pass time_column= to name the timestamp column."
         )
-    stamps = pd.to_datetime(df.pop(time_column), utc=False, format="ISO8601")
-    df.index = pd.DatetimeIndex(stamps, name=INDEX_NAME)
-    values, flags = _split_flags(df)
-    sf = SignalFrame.from_frame(values, units=units, timezone=timezone)
-    if flags is not None:
-        sf = SignalFrame(sf.values, flags.set_axis(sf.index), sf.meta)
-    return sf
+    return _to_signal_frame(
+        df,
+        time_column=time_column,
+        timezone=timezone,
+        meta=_units_meta(units),
+        iso=True,
+    )

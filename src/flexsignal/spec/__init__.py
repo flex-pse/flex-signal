@@ -41,6 +41,7 @@ from flexsignal.spec.models import (
 )
 
 __all__ = [
+    "build_json_schema",
     "MIGRATIONS",
     "SCHEMA_VERSION",
     "CsvInput",
@@ -68,3 +69,12 @@ __all__ = [
     "to_timedelta",
     "to_utc",
 ]
+
+
+def __getattr__(name: str):
+    # Imported on first use, so `python -m flexsignal.spec.schema` runs cleanly.
+    if name == "build_json_schema":
+        from flexsignal.spec.schema import build_json_schema
+
+        return build_json_schema
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

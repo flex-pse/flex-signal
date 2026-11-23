@@ -1,0 +1,269 @@
+{
+  "blobs": {},
+  "fit_report": {
+    "input": {
+      "rows": 864,
+      "streams": [
+        "flow",
+        "pressure",
+        "temperature",
+        "pump_on",
+        "reference_flow"
+      ]
+    },
+    "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+    "steps": [
+      {
+        "index": 0,
+        "kind": "range",
+        "name": null,
+        "rows_after": 864,
+        "rows_before": 864,
+        "samples_changed": {},
+        "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+        "streams_added": [],
+        "streams_removed": []
+      },
+      {
+        "index": 1,
+        "kind": "tukey",
+        "name": null,
+        "rows_after": 864,
+        "rows_before": 864,
+        "samples_changed": {},
+        "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+        "streams_added": [],
+        "streams_removed": []
+      },
+      {
+        "fit_metrics": {
+          "r2": 0.9413753033301941,
+          "rmse": 1.1084224616460183,
+          "rows": 70
+        },
+        "index": 2,
+        "kind": "calibrate",
+        "name": null,
+        "rows_after": 864,
+        "rows_before": 864,
+        "samples_changed": {},
+        "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+        "streams_added": [
+          "flow_cal"
+        ],
+        "streams_removed": []
+      },
+      {
+        "index": 3,
+        "kind": "kalman",
+        "name": null,
+        "rows_after": 864,
+        "rows_before": 864,
+        "samples_changed": {
+          "flow": 6
+        },
+        "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+        "streams_added": [],
+        "streams_removed": []
+      },
+      {
+        "index": 4,
+        "kind": "regression",
+        "name": null,
+        "rows_after": 864,
+        "rows_before": 864,
+        "samples_changed": {},
+        "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+        "streams_added": [],
+        "streams_removed": []
+      },
+      {
+        "fit_metrics": {
+          "flow_cal": {
+            "aic": 2347.8753372433375,
+            "converged": true
+          }
+        },
+        "index": 5,
+        "kind": "forecast_structural",
+        "name": null,
+        "rows_after": 888,
+        "rows_before": 864,
+        "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+        "streams_added": [],
+        "streams_removed": []
+      },
+      {
+        "applied": false,
+        "index": 6,
+        "kind": "forecast_regression",
+        "name": "pressure_ahead",
+        "rows_after": 888,
+        "rows_before": 888,
+        "samples_changed": {},
+        "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+        "streams_added": [],
+        "streams_removed": []
+      }
+    ]
+  },
+  "flexsignal_version": "0.1.0",
+  "format": "flexsignal.fitted",
+  "format_version": 1,
+  "spec": {
+    "inputs": [
+      {
+        "kind": "frame",
+        "name": "historian"
+      }
+    ],
+    "name": "fitted",
+    "schema_version": "0.1.0",
+    "steps": [
+      {
+        "kind": "range",
+        "max": 500.0,
+        "min": 0.0,
+        "streams": [
+          "flow"
+        ]
+      },
+      {
+        "k": 3.0,
+        "kind": "tukey",
+        "streams": [
+          "pressure"
+        ]
+      },
+      {
+        "kind": "calibrate",
+        "output": "flow_cal",
+        "reference": "reference_flow",
+        "target": "flow"
+      },
+      {
+        "kind": "kalman",
+        "streams": [
+          "flow"
+        ]
+      },
+      {
+        "features": [
+          "flow"
+        ],
+        "fourier": [
+          {
+            "period": "1D"
+          }
+        ],
+        "kind": "regression",
+        "streams": [
+          "pressure"
+        ]
+      },
+      {
+        "horizon": "2h",
+        "kind": "forecast_structural",
+        "seasonal": [
+          {
+            "harmonics": 2,
+            "period": "1D"
+          }
+        ],
+        "streams": [
+          "flow_cal"
+        ]
+      },
+      {
+        "horizon": "1h",
+        "kind": "forecast_regression",
+        "lags": [
+          "5min"
+        ],
+        "name": "pressure_ahead",
+        "streams": [
+          "pressure"
+        ]
+      }
+    ]
+  },
+  "spec_hash": "b6e1f4c52cf53ba9855a387d1a9a59079284c4ad5f0c7399cc21872a81ff7e35",
+  "state": {
+    "steps": [
+      {},
+      {
+        "fences": {
+          "pressure": [
+            3.5500947926960658,
+            6.51791774956688
+          ]
+        }
+      },
+      {
+        "metrics": {
+          "r2": 0.9413753033301941,
+          "rmse": 1.1084224616460183,
+          "rows": 70
+        },
+        "model": {
+          "coef": [
+            0.9407089537176627
+          ],
+          "intercept": 6.37705528183983
+        }
+      },
+      {
+        "params": {
+          "flow": {
+            "sigma2.irregular": 0.5695433089830754,
+            "sigma2.level": 0.9984270883415307
+          }
+        }
+      },
+      {
+        "models": {
+          "pressure": {
+            "coef": [
+              0.007134541592984499,
+              -0.060873011718686754,
+              -0.061967574703414297,
+              -0.00025326879644425935,
+              -0.0018396832648041523,
+              -0.00039037118226806314,
+              -0.00047938156587279515
+            ],
+            "intercept": 4.297584531662506
+          }
+        }
+      },
+      {
+        "metrics": {
+          "flow_cal": {
+            "aic": 2347.8753372433375,
+            "converged": true
+          }
+        },
+        "streams": {
+          "flow_cal": {
+            "params": {
+              "sigma2.freq_seasonal_288.0(2)": 3.567028616433277e-11,
+              "sigma2.irregular": 0.7766750053547787,
+              "sigma2.level": 0.006052789744918051
+            }
+          }
+        }
+      },
+      {
+        "streams": {
+          "pressure": {
+            "coef": [
+              0.9920328225286021
+            ],
+            "intercept": 0.04010910466577222,
+            "residual_quantiles": {}
+          }
+        }
+      }
+    ]
+  }
+}

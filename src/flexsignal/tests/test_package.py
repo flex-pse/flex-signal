@@ -1,4 +1,4 @@
-"""Package-level guarantees that hold from M0 onward."""
+"""Package-level guarantees."""
 
 import importlib
 import subprocess
@@ -19,18 +19,20 @@ SUBPACKAGES = [
     "flexsignal.eval",
     "flexsignal.api",
     "flexsignal.testing",
+    "flexsignal.handoff",
     "flexsignal.integrations",
     "flexsignal.integrations.flexpse",
     "flexsignal.integrations.acquirium",
 ]
 
-# PLAN.md D1/D5: flex-pse workflows import flex-signal, so importing it must
+# flex-pse workflows import flex-signal, so importing it must
 # not drag in flex-pse (circular imports), the pyomo/idaes stack, torch, or
 # polars. Optional backends are imported lazily, when used.
 FORBIDDEN_ON_IMPORT = [
     "flexcore",
     "flexops",
     "flexparameterize",
+    "flexdesign",
     "pyomo",
     "idaes",
     "torch",

@@ -48,7 +48,8 @@ How to choose the parameters:
 
 - **`Range`** limits are physical: what the meter can actually read.
 - **`RateOfChange`** `max_rate` should sit well above the fastest real change (about 10 m³/h per 5 min here) and
-  well below a spike.
+  well below a spike. Each value is compared with the last accepted one, starting from the first valid value, so a
+  bad first value would reject the good data after it: keep a `Range` or `Hampel` step before it, as here.
 - **`Hampel`** needs a window several times wider than a spike but short enough that the daily cycle barely moves
   within it. `min_scale` is the meter's noise level. It stops ordinary noise being flagged on flat stretches,
   where a short window can under-estimate the spread.

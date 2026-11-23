@@ -211,7 +211,9 @@ def step_record(
     Returns:
         A JSON-able dict with the step's index, kind and name, the spec hash,
         row counts, streams added and removed, and (when the time index is
-        unchanged) how many samples changed per stream.
+        unchanged) how many samples changed per stream. A registered method's
+        record also names the function behind it (``function``: module,
+        function, package and version).
     """
     record: dict[str, Any] = {
         "index": index,
@@ -223,6 +225,10 @@ def step_record(
         "streams_added": [c for c in after.columns if c not in before],
         "streams_removed": [c for c in before.columns if c not in after],
     }
+    method = getattr(type(step), "registered", None)
+    source = getattr(method, "source", None)
+    if source:
+        record["function"] = dict(source)
     if before.index.equals(after.index):
         bv, av, bf, af = before.values, after.values, before.flags, after.flags
         changed = {}
@@ -255,11 +261,41 @@ def _check_json_state(state: Any, step: StepSpec, index: int) -> dict[str, Any]:
 # -- pipeline ------------------------------------------------------------------------
 
 
+def load_plugin_modules(plugins: str | Sequence[str] = ()) -> None:
+    """Import the plugin modules a caller named (one name or a list of names)."""
+    from flexsignal.steps.registered import load_plugins
+
+    load_plugins(*([plugins] if isinstance(plugins, str) else plugins))
+
+
+def resolve_spec(
+    spec: SignalSpec | Mapping[str, Any] | str | Path,
+    base_dir: str | Path | None = None,
+    plugins: str | Sequence[str] = (),
+) -> tuple[SignalSpec, Path]:
+    """Load the caller's plugins, then the spec; return it and its base directory.
+
+    Relative paths in the spec (file inputs, ``$source``) resolve against
+    ``base_dir``; by default the spec file's directory for a path, else the
+    working directory. ``fs.run``, ``fs.fit`` and ``fs.backtest`` all use this.
+    """
+    load_plugin_modules(plugins)
+    if isinstance(spec, str | Path) and not str(spec).lstrip().startswith("{"):
+        root = Path(base_dir) if base_dir is not None else Path(spec).parent
+    else:
+        root = Path(base_dir) if base_dir is not None else Path.cwd()
+    return load_spec(spec, base_dir=root), root
+
+
 class Pipeline:
     """An unfitted pipeline: a spec you can fit.
 
+    Steps run in order. Give them all at once as a list, or add them one at a
+    time with :meth:`add_step`; both build the same spec.
+
     Args:
-        steps: The steps, in order.
+        steps: The steps, in order (default: none yet; add them with
+            :meth:`add_step`).
         name: Pipeline name.
         inputs: Input slots (see :func:`~flexsignal.pipeline.bind_inputs`).
         outputs: Where :func:`flexsignal.run` writes results.
@@ -268,8 +304,12 @@ class Pipeline:
 
     Examples:
         >>> import flexsignal as fs
-        >>> pipe = fs.Pipeline([fs.clean.Range("flow", min=0)], name="demo")
-        >>> pipe.spec.steps[0].kind
+        >>> pipe = fs.Pipeline(name="demo")
+        >>> pipe.add_step(fs.clean.Range("flow", min=0))
+        Pipeline('demo': range)
+        >>> pipe.add_step(fs.impute.Interpolate("flow", max_gap="15min"))
+        Pipeline('demo': range, interpolate)
+        >>> fs.Pipeline([fs.clean.Range("flow", min=0)], name="demo").spec.steps[0].kind
         'range'
     """
 
@@ -300,6 +340,32 @@ class Pipeline:
         pipeline.spec = load_spec(spec)
         return pipeline
 
+    def add_step(self, step: StepSpec | Mapping[str, Any]) -> Pipeline:
+        """Add a step after the ones already in the pipeline.
+
+        The step is checked straight away, as it would be in a list: an unknown
+        ``kind``, bad options, or a ``name`` another step already has raise here.
+
+        Args:
+            step: A step object, e.g. ``fs.clean.Range("flow", min=0)``, or a step
+                dict with a ``kind``, as in a JSON spec.
+
+        Returns:
+            This pipeline, so calls can be chained, as in
+            ``pipe.add_step(a).add_step(b)``.
+        """
+        spec = self.spec
+        self.spec = SignalSpec(
+            schema_version=spec.schema_version,
+            name=spec.name,
+            description=spec.description,
+            inputs=spec.inputs,
+            steps=[*spec.steps, step],
+            outputs=spec.outputs,
+            metadata=spec.metadata,
+        )
+        return self
+
     def __repr__(self) -> str:
         """Show the name and step kinds."""
         kinds = ", ".join(s.kind for s in self.spec.steps)
@@ -317,12 +383,17 @@ class Pipeline:
         Args:
             data: Training data (see :func:`~flexsignal.pipeline.bind_inputs`).
             base_dir: Directory for relative input file paths.
-            progress: Called as ``progress(fraction, message)`` after each step.
+            progress: Called as ``progress(fraction, message)`` after each step
+                (once, with 1.0, if there are no steps).
+
+        A forecast step at the end of the pipeline is fitted but not run: no
+        later step needs its forecast, so training data needs no ``exog``
+        values beyond its end. Its fit-report record says ``"applied": False``.
 
         Returns:
             The fitted pipeline.
         """
-        fitted, _ = self.fit_transform(data, base_dir=base_dir, progress=progress)
+        fitted, _ = self._fit(data, base_dir, progress, run_last_forecast=False)
         return fitted
 
     def fit_transform(
@@ -333,6 +404,18 @@ class Pipeline:
         progress: Progress | None = None,
     ) -> tuple[FittedPipeline, SignalFrame]:
         """Fit every step; return the fitted pipeline and transformed training data."""
+        return self._fit(data, base_dir, progress, run_last_forecast=True)
+
+    def _fit(
+        self,
+        data: DataLike,
+        base_dir: str | Path | None,
+        progress: Progress | None,
+        *,
+        run_last_forecast: bool,
+    ) -> tuple[FittedPipeline, SignalFrame]:
+        from flexsignal.steps.forecast import ForecastStep
+
         digest = spec_hash(self.spec)
         sf = bind_inputs(self.spec, data, base_dir=base_dir)
         input_summary = {"rows": len(sf), "streams": sf.columns}
@@ -341,13 +424,21 @@ class Pipeline:
         n = len(self.spec.steps)
         for i, step in enumerate(self.spec.steps):
             state = _check_json_state(step.fit(sf), step, i)
-            after = step.transform(sf, state)
-            record = step_record(i, step, sf, after, digest)
-            sf = after.with_record(record)
+            if not run_last_forecast and i == n - 1 and isinstance(step, ForecastStep):
+                record = {**step_record(i, step, sf, sf, digest), "applied": False}
+            else:
+                after = step.transform(sf, state)
+                record = step_record(i, step, sf, after, digest)
+                sf = after.with_record(record)
             states.append(state)
+            # Steps that fit a model report how well it fits (e.g. calibrate).
+            if isinstance(state.get("metrics"), dict):
+                record = {**record, "fit_metrics": state["metrics"]}
             records.append(record)
             if progress is not None:
                 progress((i + 1) / n, f"fit {step.kind}")
+        if progress is not None and n == 0:
+            progress(1.0, "fit done")
         fit_report = {"spec_hash": digest, "input": input_summary, "steps": records}
         return FittedPipeline(self.spec, states, fit_report), sf
 
@@ -393,7 +484,8 @@ class FittedPipeline:
         Args:
             data: The data (see :func:`~flexsignal.pipeline.bind_inputs`).
             base_dir: Directory for relative input file paths.
-            progress: Called as ``progress(fraction, message)`` after each step.
+            progress: Called as ``progress(fraction, message)`` after each step
+                (once, with 1.0, if there are no steps).
 
         Returns:
             The transformed SignalFrame, with one history record per step.
@@ -407,6 +499,8 @@ class FittedPipeline:
             sf = after.with_record(step_record(i, step, sf, after, self.spec_hash))
             if progress is not None:
                 progress((i + 1) / n, f"transform {step.kind}")
+        if progress is not None and n == 0:
+            progress(1.0, "transform done")
         return sf
 
     def report(self, result: SignalFrame | None = None) -> dict[str, Any]:
@@ -441,7 +535,7 @@ class FittedPipeline:
             ``{"format", "format_version", "flexsignal_version", "spec",
             "spec_hash", "state": {"steps": [...]}, "fit_report", "blobs"}``.
             Everything except ``blobs`` is JSON-able. ``blobs`` maps a name to
-            bytes, for steps whose state can't be JSON (none in M1).
+            bytes, for steps whose state can't be JSON (none yet).
         """
         return {
             "format": PAYLOAD_FORMAT,
@@ -537,8 +631,18 @@ class FittedPipeline:
         return root
 
     @classmethod
-    def load(cls, directory: str | Path) -> FittedPipeline:
-        """Load a pipeline saved with :meth:`save`."""
+    def load(
+        cls, directory: str | Path, *, plugins: Sequence[str] = ()
+    ) -> FittedPipeline:
+        """Load a pipeline saved with :meth:`save`.
+
+        Args:
+            directory: Where it was saved.
+            plugins: Modules to import first, so the methods they register (and
+                the saved pipeline uses) are available (see
+                :func:`flexsignal.load_plugins`).
+        """
+        load_plugin_modules(plugins)
         root = Path(directory)
         manifest_path = root / "fitted" / "manifest.json"
         if not manifest_path.exists():

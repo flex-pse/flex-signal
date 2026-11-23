@@ -8,6 +8,10 @@ Synthetic test data
 
 .. autofunction:: plant
 
+.. autofunction:: abcd
+
+.. autofunction:: digester
+
 .. autoclass:: SyntheticCase
    :members:
 

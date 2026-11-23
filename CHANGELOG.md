@@ -1,96 +1,129 @@
 # Changelog
 
 All notable changes to this project are documented in this file.
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
+[semantic versioning](https://semver.org/). What stays stable between releases, and how features are deprecated,
+is described in [Stability and deprecation](https://flex-pse.github.io/flex-signal/explanation/stability.html).
 
 ## [Unreleased]
 
-### Added
+## [0.1.0] - unreleased
 
-- **Core data model (M1).**
-  - `SignalFrame`: values, a per-sample `uint16` quality-flag bitmask, per-stream `StreamMeta` (units, quantity
-    kind, source) and provenance `history`. The time index is always tz-aware UTC, nanosecond resolution, sorted
-    and unique, and frames are immutable.
-  - Timestamps without a time zone are taken as this machine's local time (`local_timezone()`, overridable with
-    the `TZ` environment variable) and raise a `NaiveTimestampWarning`. Passing `timezone=` silences it. This
-    applies to `SignalFrame`, `from_frame`, `read_csv`, `read_parquet` and spec file inputs; timestamps written
-    in a spec still mean UTC. New core dependency: `tzlocal`.
-  - `Flag` bits: `MISSING`, `OUT_OF_RANGE`, `RATE_OF_CHANGE`, `OUTLIER`, `STUCK`, `MANUAL`, `EXCLUDED`,
-    `CORRECTED`, `IMPUTED_SHORT`, `IMPUTED_MODEL`, `FORECAST`, `DERIVED`, `RESAMPLED`, `NO_SAMPLE`. Cleaning sets a
-    value to NaN and sets a flag; it never deletes data.
-  - `NO_SAMPLE` marks the rows a stream gets only because another input has a sample at that time, when several
-    inputs are joined. `align`, `resample` and `interpolate` skip those rows. Before this, an off-grid source
-    joined with an on-grid one aligned to the join's padding and came out all NaN.
-  - The `SignalError` hierarchy (`SignalConfigError`, `SignalDataError`, `SignalBackendError`). Errors carry a
-    dotted `field` path and survive pickling.
-  - The step registry with the `flexsignal.steps` entry-point group, and the backend registry
-    (`get_backend("scipy:PchipInterpolator")`, lazy imports, "install the extra" errors) with the
-    `flexsignal.backends` group.
-- **`SignalSpec` (schema `0.1.0`).**
-  - Strict, frozen pydantic models with `kind`-discriminated steps, named input slots (`frame`, `parquet`, `csv`)
-    and outputs (`parquet`, `csv`).
-  - `load_spec` / `dump_spec`, `MIGRATIONS`, `$source` file references, and `spec_hash` over canonical JSON.
-  - Conditions (`keep_when`, `invalid_when`) can't run code. `check_condition` parses each one and accepts only
-    stream names, numbers, arithmetic, comparisons, `and`/`or`/`not`/`&`/`|`/`~` and the math functions in
-    `CONDITION_FUNCTIONS`. It runs when a spec is loaded and before evaluation, and refuses attribute access,
-    indexing, strings and other calls with an error naming the field.
-  - Errors name the exact field once, e.g. `steps.2.window: '1 hour' is not a duration ...`. A spec with several
-    problems lists them all.
-  - The JSON Schema is committed at `src/flexsignal/spec/schemas/signal_spec.schema.json`, and a test keeps it
-    current.
-  - A step *is* its spec: the object built in Python is what JSON loads into. Fitted state is a separate JSON dict
-    returned by `fit()`.
-- **Steps.**
-  - select: `align`, `resample`, `window`, `mask`, `rename`, `combine`, `shift`.
-  - clean: `range`, `rate_of_change`, `stuck`, `hampel` (with a `min_scale` noise floor), `tukey` (fences learned
-    in `fit`), `expression`.
-  - impute: `interpolate` (linear, nearest, previous, PCHIP, Akima via numpy/scipy), limited to gaps no longer
-    than `max_gap` and never filling `EXCLUDED` values.
-- **Pipelines and entry points.**
-  - `Pipeline` / `FittedPipeline` with `fit`, `transform`, `report`, `to_payload` / `from_payload`, and `save` /
-    `load` (plain JSON files, no pickle).
-  - Every step's effect is recorded in the output's history by comparing its input and output.
-  - `flexsignal.run` / `flexsignal.fit` follow the orchestrator contract: spec in, JSON-able `RunResult` out, no
-    I/O when data is passed in, and progress callbacks.
-- **File I/O.** Parquet that keeps flags, units and provenance in the Arrow metadata, and CSV with exact float
-  round-trips.
-- **`flexsignal.testing.synthetic`.** A seeded generator of plant-like data (flow, pressure, temperature, pump
-  status, an intermittent reference meter). It injects spikes, stuck runs, gaps, out-of-range values, drift and
-  steps, with exact ground-truth masks.
-- **Tests.**
-  - Each cleaner flags exactly the injected faults.
-  - Python- and JSON-built pipelines give bit-identical output.
-  - Every step kind round-trips through JSON.
-  - Orchestrator contract tests: params-model embedding, JSON results and payloads, pickling, no I/O.
-  - Every code block in the explanation and how-to docs runs in CI.
-- **Docs.**
-  - Explanation pages: SignalFrame and flags, the pipeline spec, steps and backends, time and units.
-  - How-to guides: clean a stream, save and load a fitted pipeline.
-  - An example script.
-  - A full API reference, with step, field, flag and backend tables generated from the registries.
-- **Tutorials.** Four marimo notebooks in `tutorials/`, from a first look at the data to multi-stream rules:
-  a first look, cleaning one stream, pipelines and specs, and several streams. Each scores its steps against
-  the injected faults and asserts its own results. CI runs them as scripts, and the docs site publishes them as
-  static pages. Install with the new `[tutorials]` extra.
+The first release. Pipelines select, clean, calibrate, impute and forecast plant timeseries data, from Python or
+from JSON specs, and hand the result to flex-pse models and flex-orchestrator studies.
 
-- **Project scaffold (M0).**
-  - `flex-signal` distribution with the `flexsignal` import package: a src layout, Python ≥3.11, and the core
-    dependencies from `PLAN.md` §5.1.
-  - Subpackage skeleton (`core`, `spec`, `io`, `backends`, `steps`, `pipeline`, `eval`, `api`,
-    `integrations.flexpse`, `integrations.acquirium`), with each module's purpose and target milestone in its
-    docstring.
-  - import-linter contracts for the layering, the independence of the integrations, and the rules that only
-    `integrations.flexpse` may import flex-pse, pyomo or idaes and only `integrations.acquirium` may import
-    acquirium or polars.
-  - Tooling: ruff (flex-pse's rules plus `D`, Google style), black, pre-commit with a pre-push suite, and pytest
-    tier markers (`unit`, `component`, `integration`). A root `conftest.py` fails collection when a test has
-    anything other than exactly one tier marker.
-  - CI mirroring flex-pse v0.3.0:
-    - uv installs;
-    - tests on Python 3.11–3.14 (Linux), plus 3.13 on macOS and Windows;
-    - a single coverage run uploaded to Codecov (`codecov.yml`);
-    - an integration job;
-    - a standard-install check against the built wheel.
-  - Sphinx docs (furo, MyST) deployed to GitHub Pages, and a PyPI publish workflow.
-  - `CONTRIBUTING.md`, plus issue and PR templates mirroring flex-pse.
-- **Test:** `import flexsignal` loads no flex-pse, pyomo, idaes, torch, polars or acquirium (`PLAN.md` D1).
+### Spec and stability
+
+- **`SignalSpec`, schema `0.1.0`, frozen.** Strict pydantic models with `kind`-discriminated steps, named input
+  slots (`frame`, `parquet`, `csv`) and outputs (`parquet`, `csv`). `load_spec` / `dump_spec`, `$source` file
+  references, and `spec_hash` over canonical JSON (the same whatever the key order or written defaults).
+  - A step *is* its spec: the object built in Python is what JSON loads into, so both give bit-identical output.
+    Fitted state is a separate JSON dict.
+  - Errors name the exact field, e.g. `steps.2.window: '1 hour' is not a duration ...`, and carry it in
+    `error.field`.
+  - The JSON Schema is committed at `src/flexsignal/spec/schemas/signal_spec.schema.json`, and
+    `flexsignal.spec.build_json_schema()` returns it.
+  - Specs and fitted pipelines saved by this release will keep loading in later ones: later schema versions
+    upgrade them through `MIGRATIONS`. The test suite holds a frozen copy of the 0.1.0 schema, a spec with every
+    step kind and a fitted payload, and fails if the schema changes without a new version and a migration.
+  - A spec validated directly, such as one embedded in a caller's pydantic model, has its version checked and is
+    migrated as `load_spec` does.
+- **Conditions can't run code.** `keep_when`, `fit_when`, `invalid_when` and the other conditions are parsed and
+  checked against an allowlist (stream names, numbers, arithmetic, comparisons, boolean operators and the
+  functions in `CONDITION_FUNCTIONS`) when a spec loads, then evaluated by flex-signal with numpy. Helpers:
+  `held(C == 0, "30min")`, `valid(B)`, `is_raw(B)`, `flagged(A, "OUTLIER")`. Every comparison with a missing value
+  is False, `!=` included.
+- **Specs never import code.** Models and methods are named by registered keys, never `"package.module:Class"`
+  paths.
+- A deprecation policy: deprecated features warn for at least one minor release before they are removed.
+
+### Data model
+
+- `SignalFrame`: values, a per-sample `uint16` quality-flag bitmask, per-stream `StreamMeta` (units, quantity
+  kind, source, forecast issue time) and provenance `history`. The index is tz-aware UTC, and frames are
+  immutable.
+- `Flag` bits: `MISSING`, `OUT_OF_RANGE`, `RATE_OF_CHANGE`, `OUTLIER`, `STUCK`, `MANUAL`, `EXCLUDED`, `CORRECTED`,
+  `IMPUTED_SHORT`, `IMPUTED_MODEL`, `FORECAST`, `DERIVED`, `RESAMPLED`, `NO_SAMPLE`, `FILTERED`. Cleaning sets a
+  value to NaN and a flag; it never deletes data. Rows a stream gets only from joining inputs are `NO_SAMPLE`.
+- Timestamps without a time zone are taken as the machine's local time, with a `NaiveTimestampWarning`;
+  `timezone=` sets it. Timestamps written in a spec mean UTC.
+- The `SignalError` hierarchy (`SignalConfigError`, `SignalDataError`, `SignalBackendError`), with dotted `field`
+  paths, surviving pickling.
+- Parquet I/O that keeps flags, units and provenance in the Arrow metadata, and CSV with exact float round trips.
+- `[units]`: `convert_units` converts streams with pint, and a `range` bound may be given in other units.
+
+### Steps
+
+- **select:** `align`, `resample`, `window`, `mask`, `rename`, `combine`, `shift`, `convert_units`, and `scale`
+  (multiply by a constant and set new units, e.g. through a density). `combine(how="sum")` is missing wherever an
+  input is missing, unless `missing_as_zero=True`.
+- **clean:** `range`, `rate_of_change` (with `reset_after`, so a bad first value or a genuine fast step doesn't
+  reject everything after it), `stuck`, `hampel`, `tukey` (fences learned in `fit`), `expression`,
+  `filter` (Savitzky-Golay, Butterworth, moving median), `detotalize` (running total to rate, with rollovers).
+- **correct:** `calibrate` fits a stream to a trusted, intermittent reference where `fit_when` holds and applies
+  it where `apply_when` holds, prefers the reference where it is trusted, and can refit on a rolling window to
+  follow drift. Models: scikit-learn's `LinearRegression`, `Ridge`, `HuberRegressor`, `TheilSenRegressor`,
+  statsmodels' `OLS` and `RLM`, and `scipy:curve_fit` with a formula. Fitted models are JSON coefficients.
+- **impute:** `interpolate` (linear, nearest, previous, PCHIP, Akima), `kalman`, `regression` (other streams,
+  lags, Fourier terms), `knn`, `iterative`, and `tiered`, which routes each gap to a method by its length. Every
+  imputer takes `max_gap` and never fills `EXCLUDED` or `NO_SAMPLE` values. Daily or weekly cycles are one
+  `CycleTerm` (`period`, `harmonics`) wherever a step takes them.
+- **forecast:** `persistence` and `seasonal_naive` baselines, `structural` (statsmodels' `UnobservedComponents`)
+  and `regression`. A forecast writes the frame's future rows, flagged `FORECAST`, from an `issue_time`; `exog`
+  streams are known ahead, and `quantiles` add `<stream>__q10`-style streams.
+
+### Your own methods and adapters
+
+- `fs.register_cleaner`, `fs.register_imputer` and `fs.register_forecaster` turn a function into a step that runs
+  from Python and JSON, in `tiered` and in backtests, and saves with a fitted pipeline. Its keyword-only
+  parameters become validated options. `fs.register_model` adds a regressor for `calibrate` and `regression`.
+  Only registered methods run; `fs.load_plugins`, `plugins=` and the `flexsignal.steps` entry-point group
+  register them.
+- Adapters, registered the same way and imported only when a step runs:
+  - `[anomaly]`: `PyodDetector`, `RupturesChangepoint`, `StumpyDiscord`;
+  - `[pypots]`: `PypotsImpute` and `PypotsForecast`, with windowing that restores the index;
+  - `[foundation]`: `ChronosForecast` (Chronos-2, and TimesFM 2.5 if installed); `[t0]`: `T0Forecast` (t0-alpha).
+    Pinned revisions, open (Apache-2.0) weights only. `[t0]` can't be installed alongside `[pypots]`, so `[all]`
+    leaves it out;
+  - `[deep]`: `NeuralforecastForecast`; `[darts]`: `DartsForecast`; `[sktime]`: `SktimeForecast`.
+  - An adapter's `model` takes any model class of its library by name; untested ones take their settings from
+    `params`. Learned models train on the data they are given and store nothing.
+
+### Pipelines, evaluation and hand-off
+
+- `Pipeline` (with `add_step`) and `FittedPipeline`: `fit`, `transform`, `report`, `to_payload` /
+  `from_payload`, and `save` / `load` as plain JSON files, no pickle. Each step's effect is recorded in the
+  provenance history.
+- `fs.run`, `fs.fit` and `fs.backtest` keep the orchestrator contract: spec in, JSON-able results out, no I/O when
+  data is passed, `(df, units)` input slots, progress callbacks, picklable results and errors. Tested in
+  `src/flexsignal/tests/contract/`.
+- `fs.backtest`: blocked, time-ordered folds that hide everything except `exog` after each issue time, with other
+  forecasters swapped in for comparison and skill against a baseline.
+- `flexsignal.eval`: `benchmark_imputers` (hidden gaps of given lengths, scored by RMSE, MAE, bias and coverage),
+  and `metrics` (RMSE, MAE, MAPE).
+- `flexsignal.handoff`: `to_grid` (one value per model time step, with a facility time zone, interval rules and
+  gap rules; `GridValues.resampled` counts steps resting on resampled or upsampled samples, and
+  `to_overrides(strict=True)` requires a model path for every column), `data_window`, `fit_data` (with a
+  `start`/`end` window, a `rename` to the regressor's names, and a `timezone` for the model's wall clock) and
+  `split_holdout` for surrogate fits, and `grids_of` / `scope_of` /
+  `targets` for models with several time blocks. They carry flex-orchestrator's own behaviour and tests.
+- `flexsignal.integrations.flexpse`: `time_grid`, `time_scopes` and `apply_values` for flex-pse specs and built
+  models, against the latest flex-pse release (0.3.1). `import flexsignal` never imports flex-pse, pyomo, idaes or
+  torch.
+- `flexsignal.testing.synthetic`: seeded plant-like data, the A/B/C/D calibration problem, and an anaerobic digester
+  (biogas from a fast and a slowly decaying pool of feed, an offset gas meter and a few lab checks a day), with
+  injected faults and exact ground truth.
+
+### Docs and tutorials
+
+- Getting started, explanation pages (including the orchestrator contract and stability), how-to guides
+  (including upgrading a spec), an included-methods page and a full API reference with tables generated from the
+  code. Every code block on these pages runs in CI.
+- Eleven marimo tutorials, from a first look at the data to running a spec as a flex-orchestrator study. Each
+  asserts what it claims; CI runs them, and the site publishes them as static pages.
+
+### Not included
+
+- skforecast, statsforecast and mlforecast adapters: they require `pandas<3`, and flex-signal and flex-pse require
+  pandas 3.
+- Acquirium sources, sinks and apps.

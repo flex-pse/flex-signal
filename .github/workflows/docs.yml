@@ -21,18 +21,38 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install -e ".[dev,docs,tutorials]"
+      # Tutorial 09 uses PyPOTS and Chronos-2: CPU torch keeps the install small.
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[dev,docs,tutorials,pypots,foundation]"
+      # Tutorial 07 builds and solves a flex-pse model: the latest flex-pse
+      # release, with HiGHS, pinned by git tag as in ci.yml.
+      - run: pip install "flex-pse[parameterize,solvers] @ git+https://github.com/flex-pse/flex-pse.git@0.3.1"
       # Run each marimo tutorial and save it, with its outputs, as a static page.
       # conf.py copies the pages into the site as tutorials/NN_name.html. A
       # tutorial that raises fails the export, and so the docs build.
+      #
+      # A tutorial marked "# docs-page: prerendered" needs something this job
+      # can't install yet (tutorial 12: flex-pse's ARIMA surrogate, on flex-pse
+      # main only). When one of its "# needs-module:" modules is missing, its
+      # page is the committed local render in docs/tutorials/prerendered/.
       - name: Export tutorials
         env:
           MPLBACKEND: Agg
+        shell: bash
         run: |
           mkdir -p docs/_tutorials/tutorials
           for notebook in tutorials/[0-9][0-9]_*.py; do
             name=$(basename "$notebook" .py)
-            marimo export html "$notebook" -o "docs/_tutorials/tutorials/$name.html"
+            missing=""
+            for module in $(sed -n 's/^\s*# needs-module: \(\S*\).*/\1/p' "$notebook"); do
+              python -c "import $module" 2>/dev/null || missing="$missing $module"
+            done
+            if [ -n "$missing" ] && grep -q "# docs-page: prerendered" "$notebook"; then
+              echo "$name needs$missing: using docs/tutorials/prerendered/$name.html"
+              cp "docs/tutorials/prerendered/$name.html" "docs/_tutorials/tutorials/$name.html"
+            else
+              marimo export html "$notebook" -o "docs/_tutorials/tutorials/$name.html"
+            fi
           done
       - run: sphinx-build -W --keep-going -b html docs docs/_build
       - run: touch docs/_build/.nojekyll

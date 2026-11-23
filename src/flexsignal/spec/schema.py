@@ -14,7 +14,7 @@ from typing import Annotated, Any, Union
 
 from pydantic import Field, create_model
 
-from flexsignal.core.registry import registered_steps
+from flexsignal.core.registry import own_steps
 from flexsignal.spec.models import SignalSpec
 
 SCHEMA_PATH = Path(__file__).parent / "schemas" / "signal_spec.schema.json"
@@ -24,10 +24,11 @@ SCHEMA_PATH = Path(__file__).parent / "schemas" / "signal_spec.schema.json"
 def build_json_schema() -> dict[str, Any]:
     """Return the JSON Schema of a SignalSpec, with every registered step kind.
 
-    ``steps`` becomes a union discriminated by ``kind`` over the registered step
-    classes, so editors and UIs can validate and autocomplete each step's options.
+    ``steps`` becomes a union discriminated by ``kind`` over flex-signal's own
+    step classes, so editors and UIs can validate and autocomplete each step's
+    options. Methods registered by users and other packages aren't included.
     """
-    step_classes = tuple(registered_steps().values())
+    step_classes = tuple(own_steps().values())
     # Union[...] (not X | Y): the members are only known at run time.
     any_step = Union[step_classes]  # noqa: UP007
     step_union = Annotated[any_step, Field(discriminator="kind")]

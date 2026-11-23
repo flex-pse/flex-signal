@@ -9,3 +9,6 @@ dependencies:
   - pip
   - pip:
       - -e .[dev,docs,tutorials]
+      # The latest flex-pse release, with HiGHS, for the hand-off to
+      # flex-pse models. Not on PyPI, so pinned by git tag; bump it with ci.yml.
+      - "flex-pse[parameterize,solvers] @ git+https://github.com/flex-pse/flex-pse.git@0.3.1"

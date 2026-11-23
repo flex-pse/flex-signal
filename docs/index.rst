@@ -10,19 +10,25 @@ fits, and flex-orchestrator studies.
 
 .. note::
 
-   flex-signal is pre-alpha (M1). Cleaning pipelines work: select, clean and
-   interpolate steps, JSON specs, and fitted-pipeline persistence. The API may
-   still change before 1.0. The architecture and milestones are in
-   `PLAN.md <https://github.com/flex-pse/flex-signal/blob/main/PLAN.md>`_.
+   flex-signal is alpha (0.1.0). Pipelines select, clean, calibrate against a
+   reference, impute gaps and forecast, from Python or JSON specs, and fitted
+   pipelines save as plain JSON. Forecasts are backtested against baselines.
+   Methods of your own, and adapters to deep, foundation and anomaly-detection
+   libraries, run as steps too.
+   Cleaned and forecast data goes into flex-pse models on their own time steps,
+   and is prepared for fitting surrogates. The spec schema is frozen from 0.1.0,
+   so saved specs keep loading in later releases (:doc:`explanation/stability`).
 
-Start with the :doc:`tutorials/index`, or go straight to
-:doc:`how_to/clean_a_stream`, then :doc:`explanation/signal_frame_and_flags`.
+Start with :doc:`getting_started/ten_minutes` or the :doc:`tutorials/index`, or
+go straight to :doc:`how_to/clean_a_stream`, then
+:doc:`explanation/signal_frame_and_flags`.
 
 .. toctree::
    :maxdepth: 2
    :caption: Getting started
 
    getting_started/installation
+   getting_started/ten_minutes
    tutorials/index
 
 .. toctree::
@@ -53,5 +59,6 @@ Start with the :doc:`tutorials/index`, or go straight to
    :maxdepth: 2
    :caption: Reference
 
+   reference/methods
    reference/index
    reference/glossary

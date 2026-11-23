@@ -1,0 +1,7 @@
+# The sdist carries the tests and their data, so the package can be tested from
+# it; the wheel leaves them out (pyproject.toml).
+include CHANGELOG.md conftest.py
+recursive-include src/flexsignal/tests *.py
+recursive-include src/flexsignal */tests/*.py */tests/**/*.py
+recursive-include src/flexsignal */tests/**/*.json
+prune **/__pycache__

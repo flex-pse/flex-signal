@@ -9,8 +9,7 @@ class StreamMeta(BaseModel):
     """What is known about one stream, independent of its values.
 
     Units are kept as metadata rather than as a pandas extension dtype. Models
-    then run on plain float64, and units are converted only at the boundaries
-    (PLAN.md §5).
+    then run on plain float64, and units are converted only at the boundaries.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -29,3 +28,10 @@ class StreamMeta(BaseModel):
         description="Where the stream came from: a file path or an external reference.",
     )
     description: str | None = Field(None, description="Free-text description.")
+    issue_time: str | None = Field(
+        None,
+        description=(
+            "For a stream with forecast values, when the forecast was made (ISO "
+            "8601, UTC). Its rows after this time are flagged FORECAST."
+        ),
+    )

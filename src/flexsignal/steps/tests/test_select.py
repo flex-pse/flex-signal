@@ -143,6 +143,33 @@ def test_combine_coalesce_and_mean():
 
 
 @pytest.mark.unit
+def test_combine_sum_is_missing_unless_missing_counts_as_zero():
+    sf = _sf(
+        {"a": [1.0, np.nan, 3.0, np.nan], "b": [10.0, 20.0, np.nan, np.nan]},
+        units={"a": "m^3/hr", "b": "m^3/hr"},
+    )
+    total = _run(fs.select.Combine(output="t", streams=["a", "b"], how="sum"), sf)
+    assert total.values["t"].iloc[0] == 11.0
+    assert total.values["t"].iloc[1:].isna().all()
+    assert all("MISSING" in flag_names(int(f)) for f in total.flags["t"].iloc[1:])
+
+    step = fs.select.Combine(
+        output="t", streams=["a", "b"], how="sum", missing_as_zero=True
+    )
+    zero = _run(step, sf)
+    assert zero.values["t"].tolist()[:3] == [11.0, 20.0, 3.0]
+    assert np.isnan(zero.values["t"].iloc[3])
+    # A value that exists is not flagged MISSING, though an input was.
+    assert flag_names(int(zero.flags["t"].iloc[1])) == ["DERIVED"]
+    assert "MISSING" in flag_names(int(zero.flags["t"].iloc[3]))
+
+    with pytest.raises(ValueError, match="only to how='sum'"):
+        fs.select.Combine(
+            output="t", streams=["a", "b"], how="mean", missing_as_zero=True
+        )
+
+
+@pytest.mark.unit
 def test_shift_needs_regular_grid_and_whole_steps():
     sf = _sf({"x": [1.0, 2.0, 3.0, 4.0]})
     out = _run(fs.select.Shift("x", by="15min"), sf)

@@ -1,4 +1,4 @@
-"""M1 acceptance: Python and JSON pipelines agree bit for bit; fitted ones persist."""
+"""Python and JSON pipelines agree bit for bit; fitted ones persist."""
 
 import json
 
@@ -226,3 +226,25 @@ def test_progress_callback_and_non_json_state():
         fs.Pipeline([BadState("flow", min=0)], name="bad").fit(
             synthetic.plant(periods=5).signal()
         )
+
+
+@pytest.mark.unit
+def test_add_step_builds_the_same_spec_as_a_list():
+    steps = [
+        fs.clean.Range("flow", min=0, name="sentinels"),
+        {"kind": "hampel", "streams": ["flow"], "window": "1h"},
+        fs.impute.Interpolate("flow", max_gap="15min"),
+    ]
+    from_list = fs.Pipeline(steps, name="p", description="d")
+    added = fs.Pipeline(name="p", description="d")
+    for step in steps:
+        assert added.add_step(step) is added  # chainable
+    assert added.spec == from_list.spec
+    assert fs.spec_hash(added.spec) == fs.spec_hash(from_list.spec)
+    assert [s.kind for s in added.spec.steps] == ["range", "hampel", "interpolate"]
+    # Checked as each step is added; a failed add leaves the pipeline unchanged.
+    with pytest.raises(ValueError, match="step names must be unique"):
+        added.add_step(fs.clean.Stuck("flow", min_duration="1h", name="sentinels"))
+    with pytest.raises(ValueError, match="unknown step kind"):
+        added.add_step({"kind": "no_such_step"})
+    assert added.spec == from_list.spec

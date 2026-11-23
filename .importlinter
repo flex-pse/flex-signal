@@ -3,17 +3,17 @@ root_packages =
     flexsignal
 include_external_packages = True
 
-# Layering (PLAN.md §3.1). Higher layers may import lower ones, never the
+# Layering. Higher layers may import lower ones, never the
 # reverse. Siblings separated by "|" must not import each other.
 [importlinter:contract:layers]
-name = core <- {spec | io} <- backends <- steps <- pipeline <- {eval | api | testing} <- integrations
+name = core <- {spec | io} <- backends <- steps <- {pipeline | adapters} <- {eval | api | testing | handoff} <- integrations
 type = layers
 containers =
     flexsignal
 layers =
     integrations
-    eval | api | testing
-    pipeline
+    eval | api | testing | handoff
+    pipeline | adapters
     steps
     backends
     spec | io
@@ -32,7 +32,7 @@ modules =
     flexsignal.integrations.flexpse
     flexsignal.integrations.acquirium
 
-# D1: flex-pse imports flex-signal, never the reverse. Only the flex-pse
+# flex-pse imports flex-signal, never the reverse. Only the flex-pse
 # integration may touch flex-pse, and only lazily (inside functions).
 [importlinter:contract:no-flexpse]
 name = flex-pse is imported only by integrations.flexpse
@@ -43,19 +43,22 @@ source_modules =
     flexsignal.io
     flexsignal.backends
     flexsignal.steps
+    flexsignal.adapters
     flexsignal.pipeline
     flexsignal.eval
     flexsignal.api
     flexsignal.testing
+    flexsignal.handoff
     flexsignal.integrations.acquirium
 forbidden_modules =
     flexcore
     flexops
     flexparameterize
+    flexdesign
     pyomo
     idaes
 
-# D5/D7: polars and Acquirium appear only at the Acquirium boundary.
+# polars and Acquirium appear only at the Acquirium boundary.
 [importlinter:contract:no-acquirium]
 name = acquirium and polars are imported only by integrations.acquirium
 type = forbidden
@@ -65,10 +68,12 @@ source_modules =
     flexsignal.io
     flexsignal.backends
     flexsignal.steps
+    flexsignal.adapters
     flexsignal.pipeline
     flexsignal.eval
     flexsignal.api
     flexsignal.testing
+    flexsignal.handoff
     flexsignal.integrations.flexpse
 forbidden_modules =
     acquirium

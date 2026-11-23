@@ -58,3 +58,29 @@ def test_drift_and_step_and_errors():
         synthetic.plant().with_spikes("nope")
     with pytest.raises(ValueError, match="only room"):
         synthetic.plant(periods=100).with_spikes("flow", count=50)
+
+
+@pytest.mark.unit
+def test_abcd_case():
+    case = synthetic.abcd(seed=3, drift_per_day=1.0)
+    obs, under = case.observed, case.underlying
+    assert list(obs.columns) == ["A", "B", "C", "D"]
+    assert case.signal().units == {"A": "m^3/hr", "B": "m^3/hr", "C": None, "D": None}
+    reporting = obs["B"].notna()
+    assert 0.1 < reporting.mean() < 0.25  # 1 h in every 6 h
+    assert set(case.faults) == {
+        "calibration",
+        "drift",
+        "reference_bias",
+        "reference_off",
+    }
+    off = case.fault_mask("reference_off", "B")
+    assert (obs["B"][off] == 0).all() and (obs["D"][off] == 1).all()
+    biased = case.fault_mask("reference_bias", "B") & ~off
+    assert ((obs["B"] - under["B"])[biased] > 15).all()
+    good = reporting & ~case.any_fault("B")
+    assert ((obs["B"] - under["B"])[good].abs() < 1.5).all()
+    # A is miscalibrated everywhere: 0.85 x true + 6 + drift.
+    expected = 0.85 * under["A"] + 6.0
+    assert ((obs["A"] - expected).iloc[:50].abs() < 4).all()
+    assert synthetic.abcd(seed=3).observed.equals(synthetic.abcd(seed=3).observed)

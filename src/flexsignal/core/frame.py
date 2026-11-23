@@ -7,6 +7,7 @@ library. Any library call can work on :attr:`SignalFrame.values` directly.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import warnings
 from collections.abc import Mapping, Sequence
@@ -106,10 +107,124 @@ def _normalize_index(index: pd.Index) -> pd.DatetimeIndex:
             "SignalFrame.from_frame."
         )
     if index.tz is None:
-        timezone = local_timezone()
-        _warn_naive(timezone)
-        index = _localize(index, timezone, assumed=True)
+        if len(index):
+            timezone = local_timezone()
+            _warn_naive(timezone)
+            index = _localize(index, timezone, assumed=True)
+        else:  # no timestamps, so no time zone to guess
+            index = index.tz_localize("UTC")
     return index.tz_convert("UTC").as_unit("ns").rename(INDEX_NAME)
+
+
+# A time of day followed by a UTC offset (or Z), e.g. "01:00:00-08:00".
+_OFFSET = re.compile(
+    r"\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:Z|UTC|[+-]\d{2}(?::?\d{2})?)$",
+    re.IGNORECASE,
+)
+
+
+def _has_offset(stamp: Any) -> bool:
+    if isinstance(stamp, str):
+        return bool(_OFFSET.search(stamp.strip()))
+    return getattr(stamp, "tzinfo", None) is not None
+
+
+def _parse_timestamps(
+    raw: Any, *, what: str, advice: str = "", iso: bool = False
+) -> pd.DatetimeIndex:
+    """Parse timestamps, accepting UTC offsets that change (e.g. across DST).
+
+    Timestamps that each carry a UTC offset, such as ``-08:00`` in winter and
+    ``-07:00`` in summer, are converted to UTC. Naive timestamps are left
+    naive, for the caller to localize.
+
+    Args:
+        raw: The timestamps: an Index, Series or array of strings or datetimes.
+        what: What they are, for error messages, e.g. ``"time column 'ts'"``.
+        advice: Extra advice appended to a parse error.
+        iso: Parse as ISO 8601 (each timestamp may differ in precision).
+
+    Returns:
+        The timestamps.
+
+    Raises:
+        SignalDataError: If they can't be parsed, or some carry an offset and
+            some don't.
+    """
+    if isinstance(raw, pd.DatetimeIndex):
+        return raw
+    kwargs: dict[str, Any] = {"format": "ISO8601"} if iso else {}
+    try:
+        # pandas warns before failing on text it can't infer a format for;
+        # the error below says it better.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="Could not infer format", category=UserWarning
+            )
+            try:
+                return pd.DatetimeIndex(pd.to_datetime(raw, **kwargs))
+            except ValueError as exc:
+                stamps = [x for x in raw if not (np.ndim(x) == 0 and pd.isna(x))]
+                offsets = [_has_offset(x) for x in stamps]
+                if not any(offsets):
+                    raise
+                if not all(offsets):
+                    raise SignalDataError(
+                        f"{what} mixes timestamps that carry a UTC offset with "
+                        "timestamps that don't, so the naive ones can't be placed "
+                        "in time. Write every timestamp with its UTC offset (e.g. "
+                        "2025-03-09T01:00:00-08:00), or all of them in UTC."
+                    ) from exc
+                # Each one has its own offset: convert them all to UTC.
+                return pd.DatetimeIndex(pd.to_datetime(raw, utc=True, **kwargs))
+    except SignalDataError:
+        raise
+    except (TypeError, ValueError, OverflowError) as exc:
+        # pandas' first line, without its "You might want to try:" list.
+        reason = str(exc).split("\n")[0].split(". You might")[0].strip().rstrip(".")
+        raise SignalDataError(
+            f"{what} could not be parsed as timestamps ({reason}). Write them in "
+            "ISO 8601 with a UTC offset, e.g. 2025-01-01T00:00:00Z." + advice
+        ) from exc
+
+
+def _with_time_index(
+    df: pd.DataFrame,
+    *,
+    timezone: str | None,
+    time_column: str | None,
+    iso: bool = False,
+) -> pd.DataFrame:
+    """Return ``df`` indexed by its timestamps, made tz-aware UTC.
+
+    The timestamps come from ``time_column`` or the index. Naive ones are taken
+    in ``timezone``, or in this machine's zone with one
+    :class:`NaiveTimestampWarning`.
+    """
+    if time_column is not None:
+        if time_column not in df.columns:
+            raise SignalDataError(
+                f"time column {time_column!r} not found; columns are "
+                f"{list(df.columns)}.",
+                field=time_column,
+            )
+        index = _parse_timestamps(
+            df[time_column], what=f"time column {time_column!r}", iso=iso
+        )
+        df = df.drop(columns=time_column)
+    else:
+        index = _parse_timestamps(
+            df.index,
+            what="the index",
+            iso=iso,
+            advice=(
+                " If the timestamps are in a column instead, pass time_column= to "
+                "name it."
+            ),
+        )
+    if index.tz is None and timezone is not None:
+        index = _localize(index, timezone, assumed=False)
+    return df.set_axis(_normalize_index(index), axis=0)
 
 
 def _as_float_frame(values: pd.DataFrame) -> pd.DataFrame:
@@ -129,6 +244,9 @@ def _as_float_frame(values: pd.DataFrame) -> pd.DataFrame:
     for col in columns:
         series = values[col]
         if pd.api.types.is_bool_dtype(series) or pd.api.types.is_numeric_dtype(series):
+            converted[col] = series.astype("float64")
+        elif series.dtype == object and series.isna().all():
+            # Entirely missing (all None, or no rows): nothing to misread.
             converted[col] = series.astype("float64")
         else:
             raise SignalDataError(
@@ -270,27 +388,7 @@ class SignalFrame:
             raise SignalDataError(
                 f"expected a pandas DataFrame, got {type(df).__name__}."
             )
-        if time_column is not None:
-            if time_column not in df.columns:
-                raise SignalDataError(
-                    f"time column {time_column!r} not found; columns are "
-                    f"{list(df.columns)}."
-                )
-            df = df.set_index(pd.DatetimeIndex(pd.to_datetime(df[time_column]))).drop(
-                columns=time_column
-            )
-        index = df.index
-        if not isinstance(index, pd.DatetimeIndex):
-            try:
-                index = pd.DatetimeIndex(pd.to_datetime(index))
-            except (TypeError, ValueError) as exc:
-                raise SignalDataError(
-                    "the index could not be parsed as timestamps. Pass time_column= to "
-                    "name the column that holds them."
-                ) from exc
-        if index.tz is None and timezone is not None:
-            index = _localize(index, timezone, assumed=False)
-        df = df.set_axis(index, axis=0)
+        df = _with_time_index(df, timezone=timezone, time_column=time_column)
 
         merged: dict[str, dict[str, Any]] = {}
         for name, item in (meta or {}).items():
@@ -480,8 +578,28 @@ class SignalFrame:
             stream: Stream name.
             timestamp: Anything ``pandas.Timestamp`` accepts; naive means UTC.
         """
-        ts = pd.Timestamp(timestamp)
+        self.stream(stream)  # refuses an unknown stream
+        try:
+            ts = pd.Timestamp(timestamp)
+        except (TypeError, ValueError) as exc:
+            raise SignalDataError(
+                f"{timestamp!r} is not a timestamp; use e.g. '2025-01-01T00:00:00Z'."
+            ) from exc
+        if pd.isna(ts):
+            raise SignalDataError(f"{timestamp!r} is not a timestamp.")
         ts = ts.tz_localize("UTC") if ts.tz is None else ts.tz_convert("UTC")
+        if ts not in self.index:
+            span = (
+                f"{self.index[0].isoformat()} to {self.index[-1].isoformat()}"
+                if len(self)
+                else "nowhere (it is empty)"
+            )
+            raise SignalDataError(
+                f"the frame has no sample at {ts.isoformat()}; it runs from {span}. "
+                "Use one of its timestamps, e.g. sf.index[0].",
+                field=stream,
+                value=timestamp,
+            )
         return flag_names(int(self._flags.at[ts, stream]))
 
     def equals(self, other: object) -> bool:

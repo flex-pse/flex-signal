@@ -35,6 +35,7 @@ class Flag(enum.IntFlag):
     DERIVED = 1 << 11
     RESAMPLED = 1 << 12
     NO_SAMPLE = 1 << 13
+    FILTERED = 1 << 14
 
 
 FLAG_DESCRIPTIONS: dict[Flag, tuple[str, str]] = {
@@ -60,13 +61,19 @@ FLAG_DESCRIPTIONS: dict[Flag, tuple[str, str]] = {
         "Deliberately left out by a selection rule; not bad data, and never filled.",
         "mask",
     ),
-    Flag.CORRECTED: ("The value was corrected by a model.", "calibrate (M2)"),
+    Flag.CORRECTED: ("The value was corrected by a model.", "calibrate"),
     Flag.IMPUTED_SHORT: (
         "A short gap was filled by interpolation.",
         "interpolate",
     ),
-    Flag.IMPUTED_MODEL: ("A gap was filled by a model.", "model imputers (M2)"),
-    Flag.FORECAST: ("The value is a forecast, not a measurement.", "forecast (M4)"),
+    Flag.IMPUTED_MODEL: (
+        "A gap was filled by a model.",
+        "kalman, regression, knn, iterative",
+    ),
+    Flag.FORECAST: (
+        "The value is a forecast, not a measurement.",
+        "persistence, seasonal_naive, structural, regression (forecast steps)",
+    ),
     Flag.DERIVED: ("The stream was computed from other streams.", "combine"),
     Flag.RESAMPLED: (
         "The value was aggregated or moved onto a new time grid.",
@@ -77,6 +84,10 @@ FLAG_DESCRIPTIONS: dict[Flag, tuple[str, str]] = {
         "another input does. Always set with MISSING. Align, resample and "
         "interpolate skip these rows.",
         "joining several inputs",
+    ),
+    Flag.FILTERED: (
+        "The value was smoothed by a filter, so it is no longer the raw reading.",
+        "filter",
     ),
 }
 """Flag → (what it means, which steps set it). Rendered into the docs flag table."""

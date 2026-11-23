@@ -1,34 +1,81 @@
 name: Publish
 
 # Publishes to PyPI through trusted publishing when a GitHub release is
-# published. Requires a "pypi" environment and a trusted publisher configured
-# for flex-pse/flex-signal on pypi.org before the first release.
+# published. Before the first release, configure on pypi.org a trusted
+# publisher for flex-pse/flex-signal, workflow publish.yml, environment "pypi"
+# (and the same on test.pypi.org with environment "testpypi"), and create both
+# environments in the repository settings.
+#
+# A manual run (Actions > Publish > Run workflow) builds, checks and uploads to
+# TestPyPI only, as a dry run.
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: build
+    name: build and check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install build
+      - run: pip install build twine
       - run: python -m build
+      - run: twine check --strict dist/*
+      # A release tag must name the version being published: 0.1.0 or v0.1.0.
+      - name: Tag matches the package version
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "$version" ]; then
+            echo "Release tag $GITHUB_REF_NAME doesn't match pyproject.toml version $version." >&2
+            exit 1
+          fi
+      # The wheel, installed alone from a scratch directory, imports and reports
+      # its version.
+      - name: Install the wheel
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" -c "import flexsignal as fs; print(fs.__version__, fs.SCHEMA_VERSION)"
       - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
 
+  testpypi:
+    name: publish to TestPyPI
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/flex-signal
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
   publish:
-    name: publish
+    name: publish to PyPI
+    if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
     environment:

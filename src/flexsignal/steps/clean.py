@@ -4,6 +4,10 @@ A cleaner never deletes a row or changes a good value. It sets each value it
 rejects to NaN and adds its flag (``OUT_OF_RANGE``, ``RATE_OF_CHANGE``,
 ``OUTLIER``, ``STUCK`` or ``MANUAL``). Values that are already missing are left
 alone.
+
+Two steps here reshape a signal rather than reject values, and say so in the
+flags: ``filter`` smooths noise (``FILTERED``), and ``detotalize`` turns a
+running total into a rate.
 """
 
 from __future__ import annotations
@@ -15,15 +19,33 @@ import numpy as np
 import pandas as pd
 from pydantic import Field, model_validator
 
+from flexsignal.backends import get_backend
 from flexsignal.core.conditions import Condition, evaluate_condition
 from flexsignal.core.exceptions import SignalConfigError, SignalDataError
-from flexsignal.core.flags import Flag
+from flexsignal.core.flags import FLAG_DTYPE, Flag
 from flexsignal.core.frame import SignalFrame
 from flexsignal.core.registry import register_step
+from flexsignal.core.units import convert
 from flexsignal.spec.models import Duration, Quantity, to_timedelta
-from flexsignal.steps._base import StreamStep, check_streams, remove_values, seconds
+from flexsignal.steps._base import (
+    StreamStep,
+    check_streams,
+    registered_lookup,
+    regular_step,
+    remove_values,
+    seconds,
+)
 
-__all__ = ["Expression", "Hampel", "Range", "RateOfChange", "Stuck", "Tukey"]
+__all__ = [
+    "Detotalize",
+    "Expression",
+    "Filter",
+    "Hampel",
+    "Range",
+    "RateOfChange",
+    "Stuck",
+    "Tukey",
+]
 
 _MAD_TO_SIGMA = 1.4826
 """1 / Φ⁻¹(0.75): turns a median absolute deviation into a standard deviation for
@@ -33,14 +55,20 @@ normal data. A fixed conversion, not a setting; tune ``Hampel.n_sigma`` instead.
 def _bound(value: float | Quantity | None, units: str | None, stream: str, field: str):
     if value is None or isinstance(value, float | int):
         return value
-    if value.units != units:
+    if value.units == units:
+        return value.value
+    if not units:
         raise SignalConfigError(
-            f"{field} is given in {value.units!r} but stream {stream!r} is in "
-            f"{units!r}. Give the bound in the stream's units (unit conversion "
-            "arrives with the [units] extra).",
+            f"{field} is given in {value.units!r} but stream {stream!r} has no "
+            "units; give the bound as a plain number, or set the stream's units.",
             field=field,
         )
-    return value.value
+    try:
+        return convert(value.value, value.units, units)
+    except SignalConfigError as exc:
+        raise SignalConfigError(
+            f"{field}: {exc.message} (stream {stream!r} is in {units!r}).", field=field
+        ) from None
 
 
 @register_step
@@ -96,11 +124,25 @@ class RateOfChange(StreamStep):
     after it, because that point is compared with the last good value before the
     spike. A genuine step change is accepted once enough time has passed for the
     allowed rate to cover it.
+
+    With ``reset_after``, a run of that many rejected values in a row that agree
+    with each other (each within ``max_rate`` of the one before) is taken as a new
+    level rather than a spike: the run is kept and becomes the reference. If the
+    old reference was the stream's first value, nothing was accepted after it,
+    so it was the outlier and is flagged instead.
     """
 
     kind: Literal["rate_of_change"] = "rate_of_change"
     max_rate: float = Field(gt=0, description="Largest allowed change per `per`.")
     per: Duration = Field("1h", description="Time unit of max_rate, e.g. 1h or 1min.")
+    reset_after: int | None = Field(
+        None,
+        ge=2,
+        description=(
+            "After this many rejected values in a row that agree with each other, "
+            "accept them as a new level. Default: never."
+        ),
+    )
 
     def transform(self, sf: SignalFrame, state: Mapping[str, Any]) -> SignalFrame:
         """Flag values that change too fast (see the class docstring)."""
@@ -111,19 +153,37 @@ class RateOfChange(StreamStep):
         remove = {}
         for col in self.streams:
             arr = values[col].to_numpy()
-            reject = np.zeros(len(arr), dtype=bool)
-            last_v = last_t = None
-            for i in np.flatnonzero(~np.isnan(arr)):
-                if last_v is not None:
-                    rate = abs(arr[i] - last_v) / ((t[i] - last_t) / per_s)
-                    if rate > self.max_rate:
-                        reject[i] = True
-                        continue
-                last_v, last_t = arr[i], t[i]
-            remove[col] = reject
+            remove[col] = self._reject(arr, t, per_s)
         return remove_values(
             sf, pd.DataFrame(remove, index=sf.index), Flag.RATE_OF_CHANGE
         )
+
+    def _reject(self, arr: np.ndarray, t: np.ndarray, per_s: float) -> np.ndarray:
+        def too_fast(i: int, j: int) -> bool:
+            return abs(arr[j] - arr[i]) / ((t[j] - t[i]) / per_s) > self.max_rate
+
+        reject = np.zeros(len(arr), dtype=bool)
+        valid = np.flatnonzero(~np.isnan(arr))
+        if not len(valid):
+            return reject
+        # The first valid value is the first reference, even if it is bad; with
+        # reset_after, a run that disagrees with it can replace it.
+        anchor = first = valid[0]
+        run: list[int] = []
+        for i in valid[1:]:
+            if not too_fast(anchor, i):
+                anchor, run = i, []
+                continue
+            reject[i] = True
+            if self.reset_after is None:
+                continue
+            run = run + [i] if run and not too_fast(run[-1], i) else [i]
+            if len(run) >= self.reset_after:
+                reject[run] = False
+                if anchor == first:  # nothing was ever accepted after it
+                    reject[first] = True
+                anchor, run = i, []
+        return reject
 
 
 @register_step
@@ -297,13 +357,175 @@ class Expression(StreamStep):
     invalid_when: Condition = Field(
         description="Condition over stream names, e.g. 'pressure < 0'."
     )
-    flag: Literal["MANUAL", "OUT_OF_RANGE", "RATE_OF_CHANGE", "OUTLIER", "STUCK"] = (
-        Field("MANUAL", description="Which flag to set on rejected values.")
-    )
+    flag: Literal[
+        "MANUAL", "OUT_OF_RANGE", "RATE_OF_CHANGE", "OUTLIER", "STUCK", "EXCLUDED"
+    ] = Field("MANUAL", description="Which flag to set on rejected values.")
 
     def transform(self, sf: SignalFrame, state: Mapping[str, Any]) -> SignalFrame:
         """Flag values where the condition holds."""
         check_streams(sf, self.streams)
-        hit = evaluate_condition(sf.values, self.invalid_when, field="invalid_when")
+        hit = evaluate_condition(sf, self.invalid_when, field="invalid_when")
         remove = pd.DataFrame({col: hit for col in self.streams})
         return remove_values(sf, remove, Flag[self.flag])
+
+
+def _runs(valid: np.ndarray) -> list[tuple[int, int]]:
+    """Return ``(start, stop)`` of each run of True values."""
+    edges = np.diff(np.concatenate([[0], valid.astype(int), [0]]))
+    starts, stops = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+    return list(zip(starts, stops, strict=True))
+
+
+@register_step
+class Filter(StreamStep):
+    """Smooth noise out of a stream.
+
+    - ``savgol``: a Savitzky-Golay filter (:func:`scipy.signal.savgol_filter`)
+      fits a polynomial of degree ``polyorder`` across a moving ``window``. It
+      keeps peaks better than a moving average.
+    - ``butterworth``: a low-pass Butterworth filter of ``order``, run forwards
+      and backwards so it adds no delay (:func:`scipy.signal.sosfiltfilt`). It
+      removes variation faster than ``cutoff``, a period such as 30min.
+    - ``median``: a centred moving median over ``window``. It removes spikes as
+      well as noise, but flattens sharp peaks.
+
+    Every smoothed value is flagged ``FILTERED``. Missing values stay missing.
+    ``savgol`` and ``butterworth`` need a regular index and filter each unbroken
+    run of values separately; a run too short for the filter is left as it is.
+    """
+
+    kind: Literal["filter"] = "filter"
+    method: Literal["savgol", "butterworth", "median"] = Field(
+        description="savgol, butterworth or median."
+    )
+    window: Duration | None = Field(
+        None, description="savgol and median: width of the moving window, e.g. 30min."
+    )
+    polyorder: int = Field(
+        2, ge=0, le=10, description="savgol: degree of the fitted polynomial."
+    )
+    cutoff: Duration | None = Field(
+        None,
+        description="butterworth: the shortest period of variation to keep, e.g. 1h.",
+    )
+    order: int = Field(4, ge=1, le=10, description="butterworth: filter order.")
+
+    @model_validator(mode="after")
+    def _options_for_method(self) -> Filter:
+        if self.method in ("savgol", "median") and self.window is None:
+            raise ValueError(f"{self.method} needs a window, e.g. window='30min'")
+        if self.method == "butterworth" and self.cutoff is None:
+            raise ValueError("butterworth needs a cutoff period, e.g. cutoff='1h'")
+        return self
+
+    def _smooth_run(self, run: np.ndarray, step: pd.Timedelta) -> np.ndarray | None:
+        if self.method == "savgol":
+            n = int(round(to_timedelta(self.window or "") / step))
+            n = n if n % 2 else n + 1
+            if n <= self.polyorder or len(run) < n:
+                return None
+            return get_backend("scipy:savgol_filter")(run, n, self.polyorder)
+        cutoff = to_timedelta(self.cutoff or "")
+        wn = 2.0 * step.total_seconds() / cutoff.total_seconds()
+        if not 0 < wn < 1:
+            raise SignalConfigError(
+                f"cutoff {self.cutoff} must be longer than two samples ({2 * step}).",
+                field="cutoff",
+            )
+        sos = get_backend("scipy:butter")(self.order, wn, output="sos")
+        if len(run) <= 3 * (2 * len(sos) + 1):
+            return None
+        return get_backend("scipy:sosfiltfilt")(sos, run)
+
+    def transform(self, sf: SignalFrame, state: Mapping[str, Any]) -> SignalFrame:
+        """Smooth each stream (see the class docstring)."""
+        check_streams(sf, self.streams)
+        values, flags = sf.values, sf.flags
+        step = (
+            None
+            if self.method == "median"
+            else regular_step(sf.index, kind=f"filter ({self.method})")
+        )
+        for col in self.streams:
+            arr = values[col].to_numpy(copy=True)
+            valid = ~np.isnan(arr)
+            out = np.full(len(arr), np.nan)
+            if self.method == "median":
+                window = to_timedelta(self.window or "")
+                series = values[col].dropna()
+                med = series.rolling(window, center=True, min_periods=1).median()
+                out[valid] = med.to_numpy()
+            else:
+                assert step is not None
+                for start, stop in _runs(valid):
+                    smoothed = self._smooth_run(arr[start:stop], step)
+                    if smoothed is not None:
+                        out[start:stop] = smoothed
+            done = ~np.isnan(out) & valid
+            arr[done] = out[done]
+            col_flags = flags[col].to_numpy(copy=True)
+            col_flags[done] |= FLAG_DTYPE(int(Flag.FILTERED))
+            values[col] = arr
+            flags[col] = col_flags
+        return sf.evolve(values=values, flags=flags)
+
+
+@register_step
+class Detotalize(StreamStep):
+    """Turn a running total (a totalizer or counter) into a rate.
+
+    Each valid sample gets the increase since the previous valid sample, divided
+    by the time between them, per ``per``: a total in m^3 with ``per="1h"`` gives
+    m^3/hr. The rate is stamped at the end of its interval, and carries the flags
+    of both samples. The first valid sample has no rate and is flagged
+    ``MISSING``.
+
+    A counter that wraps around at ``rollover`` (e.g. 999999) is unwrapped. A
+    total that drops with no ``rollover`` set was reset; the rate across the
+    reset is unknown, so it is left missing and flagged ``OUT_OF_RANGE``.
+    """
+
+    kind: Literal["detotalize"] = "detotalize"
+    per: Duration = Field("1h", description="Time unit of the rate, e.g. 1h.")
+    rollover: float | None = Field(
+        None, gt=0, description="Value at which the counter wraps back to 0."
+    )
+    units: str | None = Field(
+        None, description="Units of the rate, e.g. m^3/hr (default: unchanged)."
+    )
+
+    def transform(self, sf: SignalFrame, state: Mapping[str, Any]) -> SignalFrame:
+        """Convert totals to rates (see the class docstring)."""
+        check_streams(sf, self.streams)
+        per_s = to_timedelta(self.per).total_seconds()
+        t = seconds(sf.index)
+        values, flags = sf.values, sf.flags
+        meta = dict(sf.meta)
+        for col in self.streams:
+            arr = values[col].to_numpy()
+            col_flags = flags[col].to_numpy().astype("int64")
+            pos = np.flatnonzero(~np.isnan(arr))
+            rate = np.full(len(arr), np.nan)
+            out_flags = col_flags.copy()
+            if len(pos):
+                out_flags[pos[0]] |= int(Flag.MISSING)
+            if len(pos) > 1:
+                rise = np.diff(arr[pos])
+                if self.rollover is not None:
+                    rise = np.where(rise < 0, rise + self.rollover, rise)
+                reset = rise < 0
+                later = pos[1:]
+                with np.errstate(invalid="ignore"):
+                    rate[later] = np.where(
+                        reset, np.nan, rise / np.diff(t[pos]) * per_s
+                    )
+                out_flags[later] |= col_flags[pos[:-1]]
+                out_flags[later[reset]] |= int(Flag.OUT_OF_RANGE)
+            values[col] = rate
+            flags[col] = out_flags.astype(FLAG_DTYPE)
+            if self.units is not None:
+                meta[col] = meta[col].model_copy(update={"units": self.units})
+        return sf.evolve(values=values, flags=flags, meta=meta)
+
+
+__getattr__ = registered_lookup(__name__, "cleaner")

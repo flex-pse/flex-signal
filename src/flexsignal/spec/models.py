@@ -29,6 +29,7 @@ from pydantic import (
 
 from flexsignal.core.frame import SignalFrame
 from flexsignal.core.registry import get_step_class
+from flexsignal.core.times import check_duration, check_timestamp
 
 SCHEMA_VERSION = "0.1.0"
 """Version of the SignalSpec schema this release reads and writes."""
@@ -41,36 +42,17 @@ class StrictModel(BaseModel):
 
 
 def _check_duration(value: str) -> str:
-    try:
-        delta = pd.Timedelta(value)
-    except (TypeError, ValueError):
-        raise ValueError(
-            f"{value!r} is not a duration; use a pandas offset string such as "
-            "'15min', '2h' or '1D'"
-        ) from None
-    if delta <= pd.Timedelta(0):
-        raise ValueError(f"duration {value!r} must be positive")
+    check_duration(value)
     return value
 
 
 def _check_signed_duration(value: str) -> str:
-    try:
-        pd.Timedelta(value)
-    except (TypeError, ValueError):
-        raise ValueError(
-            f"{value!r} is not a duration; use a pandas offset string such as "
-            "'15min' or '-5min'"
-        ) from None
+    check_duration(value, signed=True)
     return value
 
 
 def _check_timestamp(value: str) -> str:
-    try:
-        pd.Timestamp(value)
-    except (TypeError, ValueError):
-        raise ValueError(
-            f"{value!r} is not a timestamp; use ISO 8601, e.g. '2025-01-01T00:00:00Z'"
-        ) from None
+    check_timestamp(value)
     return value
 
 
@@ -93,6 +75,56 @@ def to_utc(value: str) -> pd.Timestamp:
     """Parse a validated timestamp string; naive timestamps are taken as UTC."""
     ts = pd.Timestamp(value)
     return ts.tz_localize("UTC") if ts.tz is None else ts.tz_convert("UTC")
+
+
+_JSON_SCALARS = (str, int, float, bool, type(None))
+
+
+def _find_non_json(value: Any, path: str = "") -> tuple[str, Any] | None:
+    """Return ``(dotted path, value)`` of the first part of ``value`` JSON can't hold.
+
+    Returns None when ``value`` is made only of strings, numbers, booleans, None,
+    lists and dicts with string keys (subclasses of these, such as numpy's
+    float64, are fine). Numpy integers, timestamps and other objects are not.
+    """
+    seen: set[int] = set()
+
+    def walk(item: Any, where: str) -> tuple[str, Any] | None:
+        if isinstance(item, _JSON_SCALARS):
+            return None
+        if isinstance(item, Mapping | list | tuple):
+            if id(item) in seen:
+                return where, item
+            seen.add(id(item))
+            if isinstance(item, Mapping):
+                pairs: Any = item.items()
+            else:
+                pairs = enumerate(item)
+            for key, sub in pairs:
+                if isinstance(item, Mapping) and not isinstance(key, str):
+                    return f"{where}.{key!r}".lstrip("."), key
+                found = walk(sub, f"{where}.{key}".lstrip("."))
+                if found is not None:
+                    return found
+            seen.discard(id(item))
+            return None
+        return where, item
+
+    return walk(value, path)
+
+
+def _not_a_step(value: Any) -> str:
+    name = value.__name__ if isinstance(value, type) else type(value).__name__
+    if name == "SignalSpec":
+        return (
+            "got a whole SignalSpec where a list of steps belongs. Build a pipeline "
+            "from a spec with fs.Pipeline.from_spec(spec), or pass the spec itself "
+            "to fs.fit or fs.run"
+        )
+    return (
+        f"got a {name}, which is not a step. Steps are step objects such as "
+        "fs.clean.Range(...) or dicts with a 'kind'"
+    )
 
 
 class Quantity(StrictModel):
@@ -241,6 +273,14 @@ class SignalSpec(StrictModel):
     )
     name: str = Field(description="Name of the pipeline.")
     description: str | None = Field(None, description="What the pipeline is for.")
+    requires: tuple[str, ...] = Field(
+        (),
+        description=(
+            "Modules that register the methods this spec uses, e.g. myplant.methods. "
+            "Only a hint for error messages: flex-signal never imports them. Load "
+            "them with fs.load_plugins or plugins=."
+        ),
+    )
     inputs: tuple[InputSpec, ...] = Field(
         (),
         description=(
@@ -257,17 +297,40 @@ class SignalSpec(StrictModel):
         default_factory=dict, description="Free-form metadata, kept with the spec."
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate(cls, value: Any) -> Any:
+        # A spec dict validated directly, e.g. embedded in a caller's pydantic
+        # params model, is checked and migrated exactly as load_spec does it.
+        if isinstance(value, Mapping) and "schema_version" in value:
+            from flexsignal.spec.io import migrate
+
+            return migrate(dict(value))
+        return value
+
     @field_validator("steps", mode="before")
     @classmethod
     def _resolve_step_kinds(cls, value: Any) -> Any:
         if value is None:
             return ()
+        if isinstance(value, BaseModel) and not isinstance(value, StepSpec):
+            raise ValueError(_not_a_step(value))
         if isinstance(value, StepSpec | Mapping) or not hasattr(value, "__iter__"):
             raise ValueError("steps must be a list of steps")
+        items = list(value)
+        if items and all(
+            isinstance(item, tuple) and len(item) == 2 and item[0] in cls.model_fields
+            for item in items
+        ):
+            # list(spec) gives the spec's (field, value) pairs, so a whole spec
+            # passed where its steps belong arrives here like this.
+            raise ValueError(_not_a_step(cls))
         resolved = []
-        for i, item in enumerate(value):
+        for i, item in enumerate(items):
             if isinstance(item, StepSpec):
                 resolved.append(item)
+            elif isinstance(item, BaseModel):
+                raise ValueError(f"step {i}: {_not_a_step(item)}")
             elif isinstance(item, Mapping):
                 kind = item.get("kind")
                 if not isinstance(kind, str):
@@ -279,6 +342,20 @@ class SignalSpec(StrictModel):
                     f"{type(item).__name__}"
                 )
         return tuple(resolved)
+
+    @field_validator("metadata")
+    @classmethod
+    def _check_metadata_is_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        problem = _find_non_json(value, "metadata")
+        if problem is not None:
+            where, bad = problem
+            raise ValueError(
+                f"metadata must be JSON-able (strings, numbers, booleans, null, lists "
+                f"and objects with string keys), but {where} is "
+                f"{bad!r} (type {type(bad).__name__}). Convert it first, e.g. str(...) "
+                "for a timestamp or float(...)/int(...) for a numpy number"
+            )
+        return value
 
     @model_validator(mode="after")
     def _check_unique_names(self) -> SignalSpec:

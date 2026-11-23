@@ -78,8 +78,8 @@ def _(mo):
     | 3 | Pipelines and specs | Saving a cleaning recipe as JSON, fitting steps, provenance |
     | 4 | Several streams | Aligning sources, masking operating periods, conditional rules |
 
-    Later releases add tutorials for calibration, model-based imputation,
-    flex-pse models and forecasting.
+    Later tutorials cover calibration, model-based imputation, flex-pse
+    models, forecasting and running specs as studies.
 
     Every tutorial uses **synthetic data**. Because we inject each fault
     ourselves, we know exactly where it is, so we can check whether a cleaning
